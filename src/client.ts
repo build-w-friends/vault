@@ -1,4 +1,12 @@
-import type { RouteRecord, SecretKind, SecretMeta, SecretRecord } from "./types.ts";
+import type {
+  ApiKeyMeta,
+  AuditRecord,
+  RouteRecord,
+  Scope,
+  SecretKind,
+  SecretMeta,
+  SecretRecord,
+} from "./types.ts";
 
 class VaultClientError extends Error {
   readonly status: number;
@@ -40,12 +48,14 @@ export class VaultClient {
     path: string,
     body?: unknown,
     auth = true,
+    extraHeaders?: Record<string, string>,
   ): Promise<T> {
     const response = await fetch(new URL(path, this.origin), {
       method,
       headers: {
         ...(auth ? { Authorization: `Bearer ${this.apiKey}` } : {}),
         ...(body != null ? { "content-type": "application/json" } : {}),
+        ...extraHeaders,
       },
       body: body != null ? JSON.stringify(body) : undefined,
       redirect: "error",
@@ -65,12 +75,13 @@ export class VaultClient {
     return parsed as T;
   }
 
-  bootstrap(label?: string) {
+  bootstrap(bootstrapToken: string, label?: string) {
     return this.request<{ key: string; prefix: string }>(
       "POST",
       "/v1/bootstrap",
       { label },
       false,
+      { "X-Vault-Bootstrap-Token": bootstrapToken },
     );
   }
 
@@ -82,10 +93,32 @@ export class VaultClient {
     return this.request<{ id: string; name: string }>("POST", "/v1/projects", { name });
   }
 
+  deleteProject(name: string) {
+    return this.request<{ ok: true }>(
+      "DELETE",
+      `/v1/projects/${encodeURIComponent(name)}`,
+    );
+  }
+
   listEnvironments(project: string) {
     return this.request<{ environments: string[] }>(
       "GET",
       `/v1/projects/${encodeURIComponent(project)}/environments`,
+    );
+  }
+
+  createEnvironment(project: string, name: string) {
+    return this.request<{ name: string }>(
+      "POST",
+      `/v1/projects/${encodeURIComponent(project)}/environments`,
+      { name },
+    );
+  }
+
+  deleteEnvironment(project: string, env: string) {
+    return this.request<{ ok: true }>(
+      "DELETE",
+      `/v1/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(env)}`,
     );
   }
 
@@ -147,18 +180,60 @@ export class VaultClient {
     );
   }
 
-  createKey(body: Record<string, unknown>) {
+  createKey(body: {
+    type: "user" | "system";
+    label?: string;
+    permission?: "read" | "readwrite" | "full";
+    mode?: "inject" | "broker";
+    scopes?: Scope[];
+    expiresInDays?: number;
+  }) {
     return this.request<{ key: string; prefix: string }>("POST", "/v1/keys", body);
   }
 
-  listKeys() {
+  listKeys(includeRevoked = false) {
+    return this.request<{ keys: ApiKeyMeta[] }>(
+      "GET",
+      `/v1/keys${includeRevoked ? "?includeRevoked=1" : ""}`,
+    );
+  }
+
+  rotateKey(prefix: string, expiresInDays?: number) {
+    return this.request<{ key: string; prefix: string }>(
+      "POST",
+      `/v1/keys/${encodeURIComponent(prefix)}/rotate`,
+      expiresInDays == null ? {} : { expiresInDays },
+    );
+  }
+
+  revokeKey(prefix: string) {
+    return this.request<{ ok: true }>("DELETE", `/v1/keys/${encodeURIComponent(prefix)}`);
+  }
+
+  listAudit(limit = 50, cursor?: string) {
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (cursor != null) query.set("cursor", cursor);
+    return this.request<{ events: AuditRecord[]; nextCursor: string | null }>(
+      "GET",
+      `/v1/audit?${query.toString()}`,
+    );
+  }
+
+  listMasterKeys() {
     return this.request<{
-      keys: Array<{
-        prefix: string;
-        type: string;
-        permission: string;
-        mode: string | null;
-      }>;
-    }>("GET", "/v1/keys");
+      activeFingerprint: string;
+      wraps: Array<{ fingerprint: string; createdAt: string }>;
+    }>("GET", "/v1/master-keys");
+  }
+
+  prepareMasterKey() {
+    return this.request<{ fingerprint: string }>("POST", "/v1/master-keys/prepare", {});
+  }
+
+  retireMasterKey(fingerprint: string) {
+    return this.request<{ ok: true }>(
+      "DELETE",
+      `/v1/master-keys/${encodeURIComponent(fingerprint)}`,
+    );
   }
 }

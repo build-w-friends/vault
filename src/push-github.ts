@@ -2,6 +2,7 @@ import sodium from "libsodium-wrappers";
 
 import type { FetchLike } from "./push-cloudflare.ts";
 import { githubOwnerRepo } from "./repo-config.ts";
+import type { ProcessEnvironment } from "./types.ts";
 
 export type GithubPushTarget = {
   repo: string;
@@ -119,7 +120,7 @@ export async function pushGithubSecrets(
   }
 }
 
-export function githubTokenFromEnv(env: NodeJS.ProcessEnv = process.env): string | null {
+export function githubTokenFromEnv(env: ProcessEnvironment = process.env): string | null {
   const token = env.GH_TOKEN ?? env.GITHUB_TOKEN;
   return token != null && token.length > 0 ? token : null;
 }

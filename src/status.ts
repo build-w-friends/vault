@@ -2,6 +2,7 @@ import type { VaultClient } from "./client.ts";
 import { cloudflareTokenFromEnv, listCloudflareSecretNames } from "./push-cloudflare.ts";
 import { githubTokenFromEnv, listGithubSecretNames } from "./push-github.ts";
 import type { RepoContext } from "./repo-config.ts";
+import type { ProcessEnvironment } from "./types.ts";
 
 export type StatusReport = {
   vaultMissing: string[];
@@ -14,27 +15,30 @@ export function missingNames(required: string[], present: string[]): string[] {
   return required.filter((name) => !held.has(name));
 }
 
+export function requiredVaultNames(repo: RepoContext): string[] {
+  const runtimeRequired = repo.wrangler?.required ?? [];
+  const destinationRequired =
+    repo.vault.authority === "infisical-shadow" ? [] : (repo.vault.github?.secrets ?? []);
+  return [...new Set([...runtimeRequired, ...destinationRequired])];
+}
+
 export async function collectStatus(input: {
   client: VaultClient;
   repo: RepoContext;
   project: string;
   env: string;
-  processEnv?: NodeJS.ProcessEnv;
+  processEnv?: ProcessEnvironment;
   fetchImpl?: import("./push-cloudflare.ts").FetchLike;
 }): Promise<StatusReport> {
   const processEnv = input.processEnv ?? process.env;
   const fetchImpl = input.fetchImpl ?? fetch;
   const required = input.repo.wrangler?.required ?? [];
-  const githubDeclared = input.repo.vault.github?.secrets ?? [];
   const vaultNames = new Set(
     (await input.client.listSecretMeta(input.project, input.env)).secrets.map(
       (secret) => secret.name,
     ),
   );
-  const vaultMissing = missingNames(
-    [...new Set([...required, ...githubDeclared])],
-    [...vaultNames],
-  );
+  const vaultMissing = missingNames(requiredVaultNames(input.repo), [...vaultNames]);
 
   let cloudflareMissing: string[] | "skipped" = "skipped";
   const cfToken = cloudflareTokenFromEnv(processEnv);

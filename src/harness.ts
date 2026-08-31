@@ -6,7 +6,10 @@ import { createApp } from "./app.ts";
 import { generateMasterKey, VaultCrypto } from "./crypto.ts";
 import { openMemoryD1 } from "./d1-sqlite.ts";
 import { VaultStore } from "./db.ts";
-import type { VaultEnv } from "./types.ts";
+
+export const TEST_BOOTSTRAP_TOKEN = "test-bootstrap-token";
+
+type TestEnv = { DB: D1Database };
 
 const root = dirname(fileURLToPath(import.meta.url));
 const migrationSql = readFileSync(
@@ -15,7 +18,7 @@ const migrationSql = readFileSync(
 );
 
 export async function createTestVault(): Promise<{
-  env: VaultEnv;
+  env: TestEnv;
   crypto: VaultCrypto;
   store: VaultStore;
   app: ReturnType<typeof createApp>;
@@ -23,23 +26,30 @@ export async function createTestVault(): Promise<{
 }> {
   const masterKey = generateMasterKey();
   const crypto = await VaultCrypto.fromMasterKey(masterKey);
-  const env: VaultEnv = { DB: openMemoryD1(migrationSql), MASTER_KEY: masterKey };
+  const env: TestEnv = { DB: openMemoryD1(migrationSql) };
   return {
     env,
     crypto,
     store: new VaultStore(env.DB, crypto),
-    app: createApp(crypto),
+    app: createApp(crypto, {
+      bootstrapToken: TEST_BOOTSTRAP_TOKEN,
+      activeMasterKeyFingerprint: "test-master-key",
+    }),
     masterKey,
   };
 }
 
 export async function bootstrapUser(
   app: ReturnType<typeof createApp>,
-  env: VaultEnv,
+  env: TestEnv,
 ): Promise<string> {
   const response = await app.request(
     "/v1/bootstrap",
-    { method: "POST", body: "{}" },
+    {
+      method: "POST",
+      headers: { "X-Vault-Bootstrap-Token": TEST_BOOTSTRAP_TOKEN },
+      body: "{}",
+    },
     env,
   );
   if (!response.ok) throw new Error(`bootstrap failed: ${await response.text()}`);

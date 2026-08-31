@@ -1,5 +1,6 @@
 const IV_LENGTH = 12;
 const MASTER_KEY_BYTES = 32;
+const DATA_KEY_BYTES = 32;
 const HKDF_INFO_ENCRYPT = "encrypt";
 const HKDF_INFO_HMAC = "hmac";
 
@@ -33,13 +34,26 @@ export function parseMasterKey(value: string | undefined): Uint8Array {
 
 export class VaultCrypto {
   private constructor(
+    private readonly dataKey: Uint8Array,
     private readonly encryptionKey: CryptoKey,
     private readonly hmacKey: CryptoKey,
   ) {}
 
   static async fromMasterKey(masterKey: string | undefined): Promise<VaultCrypto> {
-    const raw = parseMasterKey(masterKey);
-    const keyBytes = new Uint8Array(raw);
+    return VaultCrypto.fromDataKey(parseMasterKey(masterKey));
+  }
+
+  static async generate(): Promise<VaultCrypto> {
+    return VaultCrypto.fromDataKey(
+      crypto.getRandomValues(new Uint8Array(DATA_KEY_BYTES)),
+    );
+  }
+
+  static async fromDataKey(dataKey: Uint8Array): Promise<VaultCrypto> {
+    if (dataKey.byteLength !== DATA_KEY_BYTES) {
+      throw new MasterKeyError("vault data key must contain exactly 32 bytes");
+    }
+    const keyBytes = new Uint8Array(dataKey);
     const hkdfKey = await crypto.subtle.importKey("raw", keyBytes, "HKDF", false, [
       "deriveKey",
     ]);
@@ -69,7 +83,27 @@ export class VaultCrypto {
         ["sign"],
       ),
     ]);
-    return new VaultCrypto(encryptionKey, hmacKey);
+    return new VaultCrypto(keyBytes, encryptionKey, hmacKey);
+  }
+
+  static async fromWrappedDataKey(
+    masterKey: string | undefined,
+    wrappedDataKey: string,
+  ): Promise<VaultCrypto> {
+    return VaultCrypto.fromDataKey(
+      await unwrapDataKey(parseMasterKey(masterKey), wrappedDataKey),
+    );
+  }
+
+  async wrapForMasterKey(masterKey: string | undefined): Promise<{
+    fingerprint: string;
+    wrappedDataKey: string;
+  }> {
+    const root = parseMasterKey(masterKey);
+    return {
+      fingerprint: await masterKeyFingerprint(root),
+      wrappedDataKey: await wrapDataKey(root, this.dataKey),
+    };
   }
 
   async encrypt(plaintext: string): Promise<string> {
@@ -109,6 +143,66 @@ export class VaultCrypto {
   async sha256(input: string): Promise<string> {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
     return toHex(digest);
+  }
+}
+
+export async function masterKeyFingerprint(masterKey: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", masterKey);
+  return toHex(digest).slice(0, 32);
+}
+
+export async function timingSafeStringEqual(
+  provided: string,
+  expected: string,
+): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const [providedHash, expectedHash] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(provided)),
+    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
+  ]);
+  const left = new Uint8Array(providedHash);
+  const right = new Uint8Array(expectedHash);
+  let different = left.byteLength ^ right.byteLength;
+  for (let index = 0; index < left.byteLength; index += 1) {
+    different |= left[index]! ^ right[index % right.byteLength]!;
+  }
+  return different === 0;
+}
+
+async function rootEncryptionKey(masterKey: Uint8Array): Promise<CryptoKey> {
+  return crypto.subtle.importKey("raw", masterKey, "AES-GCM", false, [
+    "encrypt",
+    "decrypt",
+  ]);
+}
+
+async function wrapDataKey(masterKey: Uint8Array, dataKey: Uint8Array): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+  const wrapped = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    await rootEncryptionKey(masterKey),
+    dataKey,
+  );
+  const combined = new Uint8Array(iv.byteLength + wrapped.byteLength);
+  combined.set(iv, 0);
+  combined.set(new Uint8Array(wrapped), iv.byteLength);
+  return encodeBase64(combined);
+}
+
+async function unwrapDataKey(masterKey: Uint8Array, stored: string): Promise<Uint8Array> {
+  const raw = decodeBase64(stored);
+  if (raw.byteLength <= IV_LENGTH) {
+    throw new MasterKeyError("wrapped vault data key is malformed");
+  }
+  try {
+    const decrypted = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: raw.slice(0, IV_LENGTH) },
+      await rootEncryptionKey(masterKey),
+      raw.slice(IV_LENGTH),
+    );
+    return new Uint8Array(decrypted);
+  } catch {
+    throw new MasterKeyError("MASTER_KEY does not unwrap this vault");
   }
 }
 

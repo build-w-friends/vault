@@ -13,7 +13,7 @@ import tls from "node:tls";
 import forge from "node-forge";
 
 import { applyInject } from "./presets.ts";
-import type { RouteRecord, SecretRecord } from "./types.ts";
+import type { ProcessEnvironment, RouteRecord, SecretRecord } from "./types.ts";
 import { dummyForProxy } from "./policy.ts";
 
 type ProxyCa = {
@@ -296,7 +296,7 @@ function proxyOrigin(route: RouteRecord, forward: Record<string, string>): strin
 export function proxyChildEnv(
   handle: ProxyHandle,
   extra: Record<string, string | undefined>,
-): NodeJS.ProcessEnv {
+): ProcessEnvironment {
   const child: Record<string, string | undefined> = { ...extra };
   delete child.VAULT_API_KEY;
   delete child.VAULT_API_URL;

@@ -10,6 +10,7 @@ import type {
   SecretKind,
   SecretMeta,
   SecretRecord,
+  AuditRecord,
 } from "./types.ts";
 
 type KeyRow = {
@@ -23,7 +24,9 @@ type KeyRow = {
   mode: KeyMode | null;
   created_at: string;
   last_used_at: string | null;
+  expires_at: string;
   revoked: number;
+  revoked_at: string | null;
 };
 
 type SecretRow = {
@@ -47,7 +50,17 @@ type RouteRow = {
   dummy_value: string;
 };
 
-function nowIso(clock: () => Date = () => new Date()): string {
+type AuditRow = {
+  id: string;
+  key_prefix: string;
+  action: AuditAction;
+  host_encrypted: string | null;
+  secret_name_encrypted: string | null;
+  status: string;
+  created_at: string;
+};
+
+export function nowIso(clock: () => Date = () => new Date()): string {
   return clock().toISOString();
 }
 
@@ -76,7 +89,56 @@ export class VaultStore {
     mode: KeyMode | null;
     label: string | null;
     scopes: Scope[] | null;
+    expiresAt: string;
   }): Promise<void> {
+    await (await this.prepareInsertKey(input)).run();
+  }
+
+  async claimBootstrapKey(input: {
+    plaintext: string;
+    prefix: string;
+    label: string;
+    expiresAt: string;
+  }): Promise<void> {
+    const claimedAt = nowIso();
+    try {
+      await this.db.batch([
+        this.db
+          .prepare(
+            `INSERT INTO bootstrap_state (singleton, claimed_at, key_prefix)
+             VALUES (1, ?, ?)`,
+          )
+          .bind(claimedAt, input.prefix),
+        await this.prepareInsertKey({
+          ...input,
+          type: "user",
+          permission: "full",
+          mode: null,
+          scopes: null,
+        }),
+      ]);
+    } catch {
+      throw new StoreError(409, "already bootstrapped");
+    }
+  }
+
+  async isBootstrapped(): Promise<boolean> {
+    const row = await this.db
+      .prepare("SELECT singleton FROM bootstrap_state WHERE singleton = 1")
+      .first<{ singleton: number }>();
+    return row != null;
+  }
+
+  private async prepareInsertKey(input: {
+    plaintext: string;
+    prefix: string;
+    type: KeyType;
+    permission: Permission;
+    mode: KeyMode | null;
+    label: string | null;
+    scopes: Scope[] | null;
+    expiresAt: string;
+  }): Promise<D1PreparedStatement> {
     const hash = await this.vaultCrypto.sha256(input.plaintext);
     const labelEncrypted =
       input.label != null ? await this.vaultCrypto.encrypt(input.label) : null;
@@ -84,12 +146,12 @@ export class VaultStore {
       input.scopes != null
         ? await this.vaultCrypto.encrypt(JSON.stringify(input.scopes))
         : null;
-    await this.db
+    return this.db
       .prepare(
         `INSERT INTO api_keys (
           id, key_prefix, key_hash, type, label_encrypted, scopes_encrypted,
-          permission, mode, created_at, revoked
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+          permission, mode, created_at, expires_at, revoked
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
       )
       .bind(
         newId(),
@@ -101,8 +163,8 @@ export class VaultStore {
         input.permission,
         input.mode,
         nowIso(),
-      )
-      .run();
+        input.expiresAt,
+      );
   }
 
   async findKeyByPlaintext(plaintext: string): Promise<ApiKeyRecord | null> {
@@ -115,33 +177,74 @@ export class VaultStore {
     return this.toApiKey(row);
   }
 
-  async listKeys(): Promise<
-    Array<{ prefix: string; type: KeyType; permission: Permission; mode: KeyMode | null }>
-  > {
+  async findKeyByPrefix(prefix: string): Promise<ApiKeyRecord | null> {
+    const row = await this.db
+      .prepare("SELECT * FROM api_keys WHERE key_prefix = ?")
+      .bind(prefix)
+      .first<KeyRow>();
+    return row == null ? null : this.toApiKey(row);
+  }
+
+  async listKeys(includeRevoked = false): Promise<ApiKeyRecord[]> {
     const result = await this.db
       .prepare(
-        "SELECT key_prefix, type, permission, mode FROM api_keys WHERE revoked = 0 ORDER BY created_at",
+        `SELECT * FROM api_keys
+         ${includeRevoked ? "" : "WHERE revoked = 0"}
+         ORDER BY created_at`,
       )
-      .all<{
-        key_prefix: string;
-        type: KeyType;
-        permission: Permission;
-        mode: KeyMode | null;
-      }>();
-    return (result.results ?? []).map((row) => ({
-      prefix: row.key_prefix,
-      type: row.type,
-      permission: row.permission,
-      mode: row.mode,
-    }));
+      .all<KeyRow>();
+    return Promise.all((result.results ?? []).map((row) => this.toApiKey(row)));
   }
 
   async revokeKey(prefix: string): Promise<boolean> {
-    const result = await this.db
-      .prepare("UPDATE api_keys SET revoked = 1 WHERE key_prefix = ? AND revoked = 0")
-      .bind(prefix)
-      .run();
-    return (result.meta.changes ?? 0) > 0;
+    try {
+      const result = await this.db
+        .prepare(
+          `UPDATE api_keys SET revoked = 1, revoked_at = ?
+           WHERE key_prefix = ? AND revoked = 0`,
+        )
+        .bind(nowIso(), prefix)
+        .run();
+      return (result.meta.changes ?? 0) > 0;
+    } catch (error) {
+      if (String(error).includes("cannot revoke the last active user key")) {
+        throw new StoreError(409, "cannot revoke the last active user key");
+      }
+      throw error;
+    }
+  }
+
+  async rotateKey(
+    current: ApiKeyRecord,
+    replacement: {
+      plaintext: string;
+      prefix: string;
+      expiresAt: string;
+    },
+  ): Promise<void> {
+    try {
+      await this.db.batch([
+        await this.prepareInsertKey({
+          ...replacement,
+          type: current.type,
+          permission: current.permission,
+          mode: current.mode,
+          label: current.label,
+          scopes: current.scopes,
+        }),
+        this.db
+          .prepare(
+            `UPDATE api_keys SET revoked = 1, revoked_at = ?
+             WHERE key_prefix = ? AND revoked = 0`,
+          )
+          .bind(nowIso(), current.keyPrefix),
+      ]);
+    } catch (error) {
+      if (String(error).includes("cannot revoke the last active user key")) {
+        throw new StoreError(409, "cannot revoke the last active user key");
+      }
+      throw error;
+    }
   }
 
   async touchKey(prefix: string): Promise<void> {
@@ -204,6 +307,14 @@ export class VaultStore {
       )
       .bind(newId(), projectId, name.toLowerCase(), nowIso())
       .run();
+  }
+
+  async deleteEnvironment(projectId: string, name: string): Promise<boolean> {
+    const result = await this.db
+      .prepare("DELETE FROM environments WHERE project_id = ? AND name = ?")
+      .bind(projectId, name.toLowerCase())
+      .run();
+    return (result.meta.changes ?? 0) > 0;
   }
 
   async listEnvironments(projectId: string): Promise<string[]> {
@@ -415,22 +526,81 @@ export class VaultStore {
     host?: string;
     secretName?: string;
   }): Promise<void> {
+    const hostEncrypted =
+      input.host != null ? await this.vaultCrypto.encrypt(input.host) : null;
+    const secretNameEncrypted =
+      input.secretName != null ? await this.vaultCrypto.encrypt(input.secretName) : null;
     await this.db
       .prepare(
         `INSERT INTO audit_events (
-          id, key_prefix, action, host, secret_name, status, created_at
+          id, key_prefix, action, host_encrypted, secret_name_encrypted,
+          status, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         newId(),
         input.keyPrefix,
         input.action,
-        input.host ?? null,
-        input.secretName ?? null,
+        hostEncrypted,
+        secretNameEncrypted,
         input.status,
         nowIso(),
       )
       .run();
+  }
+
+  async listAudit(input: {
+    limit: number;
+    beforeCreatedAt?: string;
+    beforeId?: string;
+  }): Promise<AuditRecord[]> {
+    const boundedLimit = Math.max(1, Math.min(input.limit, 200));
+    const cursorClause =
+      input.beforeCreatedAt != null && input.beforeId != null
+        ? "WHERE created_at < ? OR (created_at = ? AND id < ?)"
+        : "";
+    const statement = this.db.prepare(
+      `SELECT * FROM audit_events
+       ${cursorClause}
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`,
+    );
+    const result =
+      input.beforeCreatedAt != null && input.beforeId != null
+        ? await statement
+            .bind(
+              input.beforeCreatedAt,
+              input.beforeCreatedAt,
+              input.beforeId,
+              boundedLimit,
+            )
+            .all<AuditRow>()
+        : await statement.bind(boundedLimit).all<AuditRow>();
+    return Promise.all(
+      (result.results ?? []).map(async (row) => ({
+        id: row.id,
+        keyPrefix: row.key_prefix,
+        action: row.action,
+        host:
+          row.host_encrypted == null
+            ? null
+            : await this.vaultCrypto.decrypt(row.host_encrypted),
+        secretName:
+          row.secret_name_encrypted == null
+            ? null
+            : await this.vaultCrypto.decrypt(row.secret_name_encrypted),
+        status: row.status,
+        createdAt: row.created_at,
+      })),
+    );
+  }
+
+  async pruneAudit(before: string): Promise<number> {
+    const result = await this.db
+      .prepare("DELETE FROM audit_events WHERE created_at < ?")
+      .bind(before)
+      .run();
+    return result.meta.changes ?? 0;
   }
 
   private async toApiKey(row: KeyRow): Promise<ApiKeyRecord> {
@@ -442,10 +612,18 @@ export class VaultStore {
       id: row.id,
       keyPrefix: row.key_prefix,
       type: row.type,
+      label:
+        row.label_encrypted == null
+          ? null
+          : await this.vaultCrypto.decrypt(row.label_encrypted),
       permission: row.permission,
       mode: row.mode,
       scopes,
+      createdAt: row.created_at,
+      lastUsedAt: row.last_used_at,
+      expiresAt: row.expires_at,
       revoked: row.revoked === 1,
+      revokedAt: row.revoked_at,
     };
   }
 }

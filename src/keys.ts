@@ -6,7 +6,7 @@ export function randomApiKey(type: KeyType): { plaintext: string; prefix: string
   for (const byte of bytes) hex += byte.toString(16).padStart(2, "0");
   const head = type === "user" ? "vault_user_" : "vault_sys_";
   const plaintext = `${head}${hex}`;
-  return { plaintext, prefix: plaintext.slice(0, 18) };
+  return { plaintext, prefix: plaintext.slice(0, 27) };
 }
 
 export function randomSecretValue(bytes = 32): string {

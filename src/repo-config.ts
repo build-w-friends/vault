@@ -11,6 +11,7 @@ type GithubDestination = {
 type VaultJson = {
   project?: string;
   env?: string;
+  authority?: "vault" | "infisical-shadow";
   wrangler?: string;
   github?: GithubDestination;
 };

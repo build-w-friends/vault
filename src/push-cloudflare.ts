@@ -82,8 +82,9 @@ export async function pushCloudflareSecrets(
 }
 
 export function cloudflareTokenFromEnv(
-  env: NodeJS.ProcessEnv = process.env,
+  env: ProcessEnvironment = process.env,
 ): string | null {
   const token = env.CLOUDFLARE_API_TOKEN;
   return token != null && token.length > 0 ? token : null;
 }
+import type { ProcessEnvironment } from "./types.ts";

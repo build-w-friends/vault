@@ -26,8 +26,11 @@ export function canDecryptValues(key: ApiKeyRecord): boolean {
   return key.mode === "inject";
 }
 
-export function assertNotRevoked(key: ApiKeyRecord): void {
+export function assertActiveKey(key: ApiKeyRecord, now: Date = new Date()): void {
   if (key.revoked) throw new PolicyError(401, "API key revoked");
+  if (Date.parse(key.expiresAt) <= now.getTime()) {
+    throw new PolicyError(401, "API key expired");
+  }
 }
 
 export function assertScope(key: ApiKeyRecord, project: string, env: string): void {

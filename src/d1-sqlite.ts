@@ -4,7 +4,7 @@ function bindings(values: unknown[]): SQLQueryBindings[] {
   return values as SQLQueryBindings[];
 }
 
-function emptyMeta(overrides: Partial<D1Meta> = {}): D1Meta {
+function emptyMeta(overrides: Partial<D1Meta> = {}): D1Meta & Record<string, unknown> {
   return {
     duration: 0,
     size_after: 0,
@@ -39,6 +39,10 @@ class SqlitePreparedStatement implements D1PreparedStatement {
   }
 
   async run<T = Record<string, unknown>>(): Promise<D1Result<T>> {
+    return this.runSync<T>();
+  }
+
+  runSync<T = Record<string, unknown>>(): D1Result<T> {
     const result = this.db.query(this.query).run(...bindings(this.values));
     return {
       success: true,
@@ -61,6 +65,8 @@ class SqlitePreparedStatement implements D1PreparedStatement {
     };
   }
 
+  async raw<T = unknown[]>(options: { columnNames: true }): Promise<[string[], ...T[]]>;
+  async raw<T = unknown[]>(options?: { columnNames?: false }): Promise<T[]>;
   async raw<T = unknown[]>(options?: {
     columnNames?: boolean;
   }): Promise<T[] | [string[], ...T[]]> {
@@ -83,9 +89,14 @@ function wrapSqliteAsD1(db: Database): D1Database {
       return new SqlitePreparedStatement(db, query, []);
     },
     async batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
-      const results: D1Result<T>[] = [];
-      for (const statement of statements) results.push(await statement.run<T>());
-      return results;
+      return db.transaction(() =>
+        statements.map((statement) => {
+          if (!(statement instanceof SqlitePreparedStatement)) {
+            throw new Error("sqlite D1 adapter received an unknown statement");
+          }
+          return statement.runSync<T>();
+        }),
+      )();
     },
     async exec(query: string) {
       db.exec(query);

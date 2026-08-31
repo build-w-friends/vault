@@ -67,4 +67,52 @@ describe("mcp", () => {
     const gotBody = (await got.json()) as { error?: { message: string } };
     expect(gotBody.error?.message).toContain("get_secret is not available");
   });
+
+  test("sealed creation still requires write permission", async () => {
+    const { app, env } = await createTestVault();
+    const user = await bootstrapUser(app, env);
+    await app.request(
+      "/v1/projects",
+      {
+        method: "POST",
+        headers: authHeaders(user, {}),
+        body: JSON.stringify({ name: "demo" }),
+      },
+      env,
+    );
+    const created = await app.request(
+      "/v1/keys",
+      {
+        method: "POST",
+        headers: authHeaders(user, {}),
+        body: JSON.stringify({
+          type: "system",
+          mode: "broker",
+          permission: "read",
+          scopes: [{ project: "demo", env: "dev" }],
+        }),
+      },
+      env,
+    );
+    const readOnly = ((await created.json()) as { key: string }).key;
+    const denied = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: authHeaders(readOnly, {}),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: {
+            name: "create_sealed",
+            arguments: { project: "demo", env: "dev", name: "CREATED" },
+          },
+        }),
+      },
+      env,
+    );
+    const body = (await denied.json()) as { error: { message: string } };
+    expect(body.error.message).toBe("API key cannot write secrets");
+  });
 });

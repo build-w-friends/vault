@@ -1,6 +1,12 @@
+CREATE TABLE master_key_wraps (
+  fingerprint TEXT PRIMARY KEY,
+  wrapped_data_key TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE api_keys (
   id TEXT PRIMARY KEY,
-  key_prefix TEXT NOT NULL,
+  key_prefix TEXT NOT NULL UNIQUE,
   key_hash TEXT NOT NULL UNIQUE,
   type TEXT NOT NULL,
   label_encrypted TEXT,
@@ -9,7 +15,35 @@ CREATE TABLE api_keys (
   mode TEXT,
   created_at TEXT NOT NULL,
   last_used_at TEXT,
-  revoked INTEGER NOT NULL DEFAULT 0
+  expires_at TEXT NOT NULL,
+  revoked INTEGER NOT NULL DEFAULT 0,
+  revoked_at TEXT
+);
+
+CREATE INDEX api_keys_active_idx
+ON api_keys (type, revoked, expires_at);
+
+CREATE TRIGGER prevent_last_active_user_key
+BEFORE UPDATE OF revoked ON api_keys
+WHEN OLD.type = 'user'
+  AND OLD.revoked = 0
+  AND NEW.revoked = 1
+  AND OLD.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+  AND (
+    SELECT COUNT(*)
+    FROM api_keys
+    WHERE type = 'user'
+      AND revoked = 0
+      AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+  ) <= 1
+BEGIN
+  SELECT RAISE(ABORT, 'cannot revoke the last active user key');
+END;
+
+CREATE TABLE bootstrap_state (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  claimed_at TEXT NOT NULL,
+  key_prefix TEXT NOT NULL
 );
 
 CREATE TABLE projects (
@@ -53,8 +87,11 @@ CREATE TABLE audit_events (
   id TEXT PRIMARY KEY,
   key_prefix TEXT NOT NULL,
   action TEXT NOT NULL,
-  host TEXT,
-  secret_name TEXT,
+  host_encrypted TEXT,
+  secret_name_encrypted TEXT,
   status TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
+CREATE INDEX audit_events_created_idx
+ON audit_events (created_at DESC, id DESC);

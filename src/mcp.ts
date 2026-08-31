@@ -1,9 +1,9 @@
 import type { Context } from "hono";
 
+import { StoreError, VaultStore } from "./db.ts";
 import { randomSecretValue } from "./keys.ts";
-import { PolicyError, assertScope } from "./policy.ts";
-import type { ApiKeyRecord, VaultEnv } from "./types.ts";
-import { VaultStore } from "./db.ts";
+import { PolicyError, assertCanWrite, assertScope } from "./policy.ts";
+import type { ApiKeyRecord } from "./types.ts";
 
 type Rpc = {
   jsonrpc: "2.0";
@@ -13,7 +13,10 @@ type Rpc = {
 };
 
 export async function handleMcp(
-  c: Context<{ Bindings: VaultEnv; Variables: { store: VaultStore; key: ApiKeyRecord } }>,
+  c: Context<{
+    Bindings: { DB: D1Database };
+    Variables: { store: VaultStore; key: ApiKeyRecord };
+  }>,
 ): Promise<Response> {
   const key = c.get("key");
   const store = c.get("store");
@@ -101,10 +104,16 @@ export async function handleMcp(
     const { environmentId } = await store.requireEnvironment(args.project, args.env);
     if (name === "list_secrets") {
       const secrets = await store.listSecretMeta(environmentId);
+      await store.audit({ keyPrefix: key.keyPrefix, action: "list", status: "ok" });
       return result({ content: [{ type: "text", text: JSON.stringify(secrets) }] });
     }
     if (name === "list_routes") {
       const routes = await store.listRoutes(environmentId);
+      await store.audit({
+        keyPrefix: key.keyPrefix,
+        action: "route_list",
+        status: "ok",
+      });
       return result({
         content: [
           {
@@ -118,7 +127,14 @@ export async function handleMcp(
     }
     if (name === "create_sealed") {
       if (args.name == null) throw new PolicyError(400, "name is required");
+      assertCanWrite(key);
       await store.setSecret(environmentId, args.name, randomSecretValue(), "sealed");
+      await store.audit({
+        keyPrefix: key.keyPrefix,
+        action: "set",
+        status: "ok",
+        secretName: args.name,
+      });
       return result({
         content: [{ type: "text", text: `created sealed secret ${args.name}` }],
       });
@@ -128,7 +144,15 @@ export async function handleMcp(
     }
     return error(-32601, `unknown tool ${name}`);
   } catch (caught) {
-    const message = caught instanceof Error ? caught.message : String(caught);
-    return error(-32000, message);
+    if (caught instanceof PolicyError || caught instanceof StoreError) {
+      return error(-32000, caught.message);
+    }
+    console.error(
+      JSON.stringify({
+        message: "vault MCP request failed",
+        error: caught instanceof Error ? caught.message : "internal error",
+      }),
+    );
+    return error(-32603, "internal error");
   }
 }

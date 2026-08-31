@@ -14,7 +14,7 @@ function configPath(): string {
   return join(homedir(), ".config", "poc-vault", "config.json");
 }
 
-function readConfig(): VaultConfig {
+export function readConfig(): VaultConfig {
   try {
     return JSON.parse(readFileSync(configPath(), "utf8")) as VaultConfig;
   } catch {

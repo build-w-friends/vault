@@ -22,11 +22,13 @@ describe("repo config", () => {
       JSON.stringify({
         project: "bwf",
         env: "dev",
+        authority: "infisical-shadow",
         github: { repo: "acme/app", secrets: ["CI_TOKEN"] },
       }),
     );
     const ctx = loadRepoContext(root);
     expect(ctx.vault.project).toBe("bwf");
+    expect(ctx.vault.authority).toBe("infisical-shadow");
     expect(ctx.wrangler?.required).toEqual(["ALPHA", "BETA"]);
     expect(ctx.wrangler?.name).toBe("demo-worker");
     expect(ctx.vault.github?.secrets).toEqual(["CI_TOKEN"]);

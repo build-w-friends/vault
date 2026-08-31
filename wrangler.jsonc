@@ -1,18 +1,70 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "poc-vault",
+  "name": "bwf-vault-local",
+  "account_id": "00000000000000000000000000000000",
   "main": "src/worker.ts",
-  "compatibility_date": "2026-08-29",
-  "observability": { "enabled": true },
-  "secrets": {
-    "required": ["MASTER_KEY"]
+  "compatibility_date": "2026-08-31",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    "logs": { "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 0.1 }
   },
+  "vars": {
+    "ACTIVE_MASTER_KEY": "primary",
+    "AUDIT_RETENTION_DAYS": "365"
+  },
+  "triggers": { "crons": ["17 4 * * *"] },
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "poc-vault",
-      "database_id": "00000000-0000-0000-0000-000000000001",
+      "database_name": "bwf-vault",
+      "database_id": "00000000-0000-4000-8000-00000000d1d1",
       "migrations_dir": "migrations"
     }
-  ]
+  ],
+  "env": {
+    "production": {
+      "name": "bwf-vault",
+      "workers_dev": true,
+      "preview_urls": false,
+      "observability": {
+        "enabled": true,
+        "logs": { "head_sampling_rate": 1 },
+        "traces": { "enabled": true, "head_sampling_rate": 0.1 }
+      },
+      "vars": {
+        "ACTIVE_MASTER_KEY": "primary",
+        "AUDIT_RETENTION_DAYS": "365"
+      },
+      "triggers": { "crons": ["17 4 * * *"] },
+      "secrets_store_secrets": [
+        {
+          "binding": "MASTER_KEY_PRIMARY",
+          "store_id": "11111111111111111111111111111111",
+          "secret_name": "BWF_VAULT_MASTER_KEY_PRIMARY"
+        },
+        {
+          "binding": "MASTER_KEY_SECONDARY",
+          "store_id": "11111111111111111111111111111111",
+          "secret_name": "BWF_VAULT_MASTER_KEY_SECONDARY"
+        },
+        {
+          "binding": "BOOTSTRAP_TOKEN",
+          "store_id": "11111111111111111111111111111111",
+          "secret_name": "BWF_VAULT_BOOTSTRAP_TOKEN"
+        }
+      ],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "bwf-vault",
+          "database_id": "00000000-0000-4000-8000-00000000d1d1",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  }
 }

@@ -10,6 +10,7 @@ import {
   type GithubPushTarget,
 } from "./push-github.ts";
 import { githubOwnerRepo, type RepoContext } from "./repo-config.ts";
+import type { ProcessEnvironment } from "./types.ts";
 
 export type PushReport = {
   cloudflare: string[];
@@ -46,7 +47,7 @@ export async function pushDestinations(input: {
   values: Record<string, string>;
   names?: string[];
   githubRepo?: string;
-  env?: NodeJS.ProcessEnv;
+  env?: ProcessEnvironment;
   fetchImpl?: import("./push-cloudflare.ts").FetchLike;
 }): Promise<PushReport> {
   const processEnv = input.env ?? process.env;

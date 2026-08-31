@@ -2,6 +2,7 @@ export async function readSecretValue(
   inline: string | undefined,
   stdin: NodeJS.ReadableStream & { isTTY?: boolean } = process.stdin,
   stdout: NodeJS.WritableStream = process.stdout,
+  prompt = "value: ",
 ): Promise<string> {
   if (inline != null && inline.length > 0) return inline;
   if (stdin.isTTY !== true) {
@@ -11,7 +12,7 @@ export async function readSecretValue(
     if (text.length === 0) throw new Error("secret value must not be empty");
     return text;
   }
-  stdout.write("value: ");
+  stdout.write(prompt);
   const value = await readHidden(stdin, stdout);
   if (value.length === 0) throw new Error("secret value must not be empty");
   return value;

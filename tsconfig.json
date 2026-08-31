@@ -12,5 +12,5 @@
     "allowImportingTsExtensions": true,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["src/**/*.ts", "worker-configuration.d.ts"]
+  "include": ["scripts/**/*.ts", "src/**/*.ts", "worker-configuration.d.ts"]
 }
