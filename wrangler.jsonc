@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "poc-vault",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-08-29",
+  "observability": { "enabled": true },
+  "secrets": {
+    "required": ["MASTER_KEY"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "poc-vault",
+      "database_id": "00000000-0000-0000-0000-000000000001",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

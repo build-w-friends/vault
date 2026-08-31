@@ -1,0 +1,33 @@
+{
+  "name": "poc-vault",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "vault": "src/cli.ts"
+  },
+  "exports": {
+    "./vite": "./src/vite.ts"
+  },
+  "scripts": {
+    "cli": "bun src/cli.ts",
+    "dev": "wrangler dev",
+    "check": "tsc --noEmit",
+    "test": "bun test src",
+    "types": "wrangler types"
+  },
+  "dependencies": {
+    "hono": "4.13.5",
+    "libsodium-wrappers": "0.7.15",
+    "node-forge": "1.3.1",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.9",
+    "@types/libsodium-wrappers": "0.7.14",
+    "@types/node": "26.4.0",
+    "@types/node-forge": "1.3.14",
+    "typescript": "7.0.2",
+    "wrangler": "4.126.0"
+  }
+}
