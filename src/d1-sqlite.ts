@@ -77,7 +77,7 @@ class SqlitePreparedStatement implements D1PreparedStatement {
   }
 }
 
-export function wrapSqliteAsD1(db: Database): D1Database {
+function wrapSqliteAsD1(db: Database): D1Database {
   const adapter: D1Database = {
     prepare(query: string) {
       return new SqlitePreparedStatement(db, query, []);

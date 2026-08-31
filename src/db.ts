@@ -47,11 +47,11 @@ type RouteRow = {
   dummy_value: string;
 };
 
-export function nowIso(clock: () => Date = () => new Date()): string {
+function nowIso(clock: () => Date = () => new Date()): string {
   return clock().toISOString();
 }
 
-export function newId(): string {
+function newId(): string {
   return crypto.randomUUID();
 }
 

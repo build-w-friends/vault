@@ -1,6 +1,6 @@
 import type { RouteRecord, SecretKind, SecretMeta, SecretRecord } from "./types.ts";
 
-export class VaultClientError extends Error {
+class VaultClientError extends Error {
   readonly status: number;
   constructor(status: number, message: string) {
     super(message);

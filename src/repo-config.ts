@@ -3,19 +3,19 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { parseJsonc } from "./jsonc.ts";
 
-export type GithubDestination = {
+type GithubDestination = {
   repo: string;
   secrets: string[];
 };
 
-export type VaultJson = {
+type VaultJson = {
   project?: string;
   env?: string;
   wrangler?: string;
   github?: GithubDestination;
 };
 
-export type WranglerSecretsConfig = {
+type WranglerSecretsConfig = {
   path: string;
   name: string | null;
   accountId: string | null;
@@ -29,7 +29,7 @@ export type RepoContext = {
   wrangler: WranglerSecretsConfig | null;
 };
 
-export function findUp(start: string, names: string[]): string | null {
+function findUp(start: string, names: string[]): string | null {
   let directory = resolve(start);
   while (true) {
     for (const name of names) {

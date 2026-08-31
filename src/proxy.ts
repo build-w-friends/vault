@@ -16,7 +16,7 @@ import { applyInject } from "./presets.ts";
 import type { RouteRecord, SecretRecord } from "./types.ts";
 import { dummyForProxy } from "./policy.ts";
 
-export type ProxyCa = {
+type ProxyCa = {
   certPem: string;
   keyPem: string;
   ca: forge.pki.Certificate;
@@ -43,7 +43,7 @@ function opensslRsaPair(): forge.pki.rsa.KeyPair {
   };
 }
 
-export function generateProxyCa(): ProxyCa {
+function generateProxyCa(): ProxyCa {
   const keys = opensslRsaPair();
   const cert = forge.pki.createCertificate();
   cert.publicKey = keys.publicKey;

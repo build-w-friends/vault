@@ -1,5 +1,5 @@
 /** JSONC comment strip that respects strings (same rules as the repo's wrangler reader). */
-export function stripJsonComments(text: string): string {
+function stripJsonComments(text: string): string {
   let out = "";
   let inString = false;
   let escaped = false;

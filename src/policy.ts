@@ -17,7 +17,7 @@ export function canManageProjects(key: ApiKeyRecord): boolean {
   return key.type === "user";
 }
 
-export function canWriteSecrets(key: ApiKeyRecord): boolean {
+function canWriteSecrets(key: ApiKeyRecord): boolean {
   return key.permission === "full" || key.permission === "readwrite";
 }
 

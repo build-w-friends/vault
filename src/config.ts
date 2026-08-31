@@ -10,11 +10,11 @@ export type VaultConfig = {
   githubRepo?: string;
 };
 
-export function configPath(): string {
+function configPath(): string {
   return join(homedir(), ".config", "poc-vault", "config.json");
 }
 
-export function readConfig(): VaultConfig {
+function readConfig(): VaultConfig {
   try {
     return JSON.parse(readFileSync(configPath(), "utf8")) as VaultConfig;
   } catch {
