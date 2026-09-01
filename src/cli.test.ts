@@ -10,7 +10,12 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { assertProviderPushAllowed, initializeLocalVaultAt, parseArgv } from "./cli.ts";
+import {
+  assertProviderPushAllowed,
+  initializeLocalVaultAt,
+  parseArgv,
+  runCli,
+} from "./cli.ts";
 
 describe("cli argv", () => {
   test("splits flags from the command after --", () => {
@@ -36,6 +41,43 @@ describe("cli argv", () => {
     expect(parsed.command).toBe("set");
     expect(parsed.flags.env).toBe("prod");
     expect(parsed.flags.rest).toEqual(["REALTIME_APP_SECRET"]);
+  });
+
+  test("keeps --env and --wrangler-env as separate namespaces", () => {
+    const parsed = parseArgv([
+      "run",
+      "--env",
+      "prod",
+      "--wrangler-env",
+      "production",
+      "--",
+      "bun",
+      "x",
+    ]);
+    expect(parsed.flags.env).toBe("prod");
+    expect(parsed.flags.wranglerEnv).toBe("production");
+    expect(parsed.flags.rest).toEqual(["bun", "x"]);
+  });
+
+  test("reports a run failure as a message, not an unhandled rejection", async () => {
+    // `run` and `proxy` return their promise out of runCli's `try`, which the
+    // `catch` does not see without an await. The refusal to guess a Wrangler
+    // environment reaches the operator through exactly this path.
+    const previousUrl = process.env["VAULT_API_URL"];
+    const previousKey = process.env["VAULT_API_KEY"];
+    process.env["VAULT_API_URL"] = "http://127.0.0.1:1";
+    process.env["VAULT_API_KEY"] = "not-used";
+    const errors: string[] = [];
+    try {
+      const code = await runCli(["run"], { log: () => {}, error: (m) => errors.push(m) });
+      expect(code).toBe(1);
+    } finally {
+      if (previousUrl == null) delete process.env["VAULT_API_URL"];
+      else process.env["VAULT_API_URL"] = previousUrl;
+      if (previousKey == null) delete process.env["VAULT_API_KEY"];
+      else process.env["VAULT_API_KEY"] = previousKey;
+    }
+    expect(errors.join("\n")).toContain("usage: vault run -- CMD");
   });
 
   test("blocks provider writes from an Infisical shadow project", () => {

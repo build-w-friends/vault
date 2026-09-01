@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import type { RepoContext } from "./repo-config.ts";
+import type { RepoContext, WranglerEnvironmentConfig } from "./repo-config.ts";
 import { formatStatus, missingNames, requiredVaultNames, statusFails } from "./status.ts";
 
 describe("status", () => {
@@ -11,14 +11,18 @@ describe("status", () => {
   test("checks only runtime names in an Infisical shadow environment", () => {
     expect(
       requiredVaultNames(
-        repoContext("infisical-shadow", ["WORKER_SECRET"], ["CI_SECRET"]),
+        repoContext("infisical-shadow", ["CI_SECRET"]),
+        wranglerEnvironment(["WORKER_SECRET"]),
       ),
     ).toEqual(["WORKER_SECRET"]);
   });
 
   test("requires runtime and destination names when Vault is authoritative", () => {
     expect(
-      requiredVaultNames(repoContext("vault", ["WORKER_SECRET"], ["CI_SECRET"])),
+      requiredVaultNames(
+        repoContext("vault", ["CI_SECRET"]),
+        wranglerEnvironment(["WORKER_SECRET"]),
+      ),
     ).toEqual(["WORKER_SECRET", "CI_SECRET"]);
   });
 
@@ -52,7 +56,6 @@ describe("status", () => {
 
 function repoContext(
   authority: "vault" | "infisical-shadow",
-  runtimeRequired: string[],
   githubRequired: string[],
 ): RepoContext {
   return {
@@ -64,9 +67,17 @@ function repoContext(
     },
     wrangler: {
       path: "/repo/wrangler.jsonc",
-      name: "worker",
-      accountId: "account",
-      required: runtimeRequired,
+      topLevel: wranglerEnvironment([]),
+      environments: [],
     },
+  };
+}
+
+function wranglerEnvironment(required: string[]): WranglerEnvironmentConfig {
+  return {
+    environment: null,
+    name: "worker",
+    accountId: "account",
+    required,
   };
 }

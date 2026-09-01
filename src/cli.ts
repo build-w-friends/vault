@@ -11,6 +11,11 @@
  * `VAULT_API_KEY` from the child environment, so a command given secrets cannot
  * turn around and ask the vault for the rest of them.
  *
+ * `--env` is the vault environment. `--wrangler-env` is the Wrangler
+ * environment whose `secrets.required` list `run`, `status`, and `push` read;
+ * the two are separate namespaces and neither is inferred from the other. A
+ * repository records the correspondence once in `vault.json`.
+ *
  * `push` is guarded by `assertProviderPushAllowed`: while `vault.json` declares
  * Infisical authoritative, provider synchronization fails closed. That refusal
  * is what keeps a shadow import from becoming an unapproved cutover.
@@ -27,8 +32,13 @@ import { generateMasterKey } from "./crypto.ts";
 import { randomSecretValue } from "./keys.ts";
 import { readSecretValue } from "./prompt.ts";
 import { proxyChildEnv, startProxy } from "./proxy.ts";
+import { loadRequiredSecretValues } from "./inject.ts";
 import { loadVaultValues, pushDestinations } from "./push.ts";
-import { loadRepoContext } from "./repo-config.ts";
+import {
+  loadRepoContext,
+  resolveWranglerEnvironment,
+  type WranglerEnvironmentConfig,
+} from "./repo-config.ts";
 import { collectStatus, formatStatus, statusFails } from "./status.ts";
 import type {
   KeyMode,
@@ -45,6 +55,7 @@ type Flags = {
   project?: string;
   env?: string;
   githubRepo?: string;
+  wranglerEnv?: string;
   label?: string;
   type?: string;
   permission?: string;
@@ -70,6 +81,7 @@ const stringFlags = new Map<string, keyof Flags>([
   ["--project", "project"],
   ["--env", "env"],
   ["--github-repo", "githubRepo"],
+  ["--wrangler-env", "wranglerEnv"],
   ["--label", "label"],
   ["--type", "type"],
   ["--permission", "permission"],
@@ -165,11 +177,20 @@ function session(flags: Flags, cwd = process.cwd()) {
   const env = resolved.env ?? repo.vault.env ?? "dev";
   return {
     repo,
+    cwd,
     client: new VaultClient(resolved.apiUrl, resolved.apiKey),
     project,
     env,
     apiUrl: resolved.apiUrl,
     githubRepo: flags.githubRepo ?? resolved.githubRepo,
+    // Deliberately lazy. Only the three commands that read the Wrangler
+    // contract may fail on an unselected environment; `vault secrets list`
+    // has no business caring which Worker environment exists.
+    wranglerEnvironment: (): WranglerEnvironmentConfig | null =>
+      resolveWranglerEnvironment(repo, {
+        vaultEnv: env,
+        ...(flags.wranglerEnv != null ? { wranglerEnv: flags.wranglerEnv } : {}),
+      }),
   };
 }
 
@@ -280,8 +301,14 @@ export async function runCli(
         return 0;
       }
       case "status": {
-        const { client, repo, project, env } = session(flags);
-        const report = await collectStatus({ client, repo, project, env });
+        const { client, repo, project, env, wranglerEnvironment } = session(flags);
+        const report = await collectStatus({
+          client,
+          repo,
+          wrangler: wranglerEnvironment(),
+          project,
+          env,
+        });
         io.log(formatStatus(report).trimEnd());
         return statusFails(report) ? 1 : 0;
       }
@@ -318,10 +345,16 @@ export async function runCli(
       case "master-keys":
         return runMasterKeys(flags, io);
       case "push": {
-        const { client, repo, project, env, githubRepo } = session(flags);
+        const { client, repo, project, env, githubRepo, wranglerEnvironment } =
+          session(flags);
         assertProviderPushAllowed(repo.vault.authority);
         const values = await loadVaultValues(client, project, env);
-        const report = await pushDestinations({ repo, values, githubRepo });
+        const report = await pushDestinations({
+          repo,
+          wrangler: wranglerEnvironment(),
+          values,
+          githubRepo,
+        });
         for (const name of report.cloudflare) io.log(`cloudflare: ${name}`);
         for (const name of report.github) io.log(`github: ${name}`);
         for (const skip of report.skipped) io.log(`skipped ${skip}`);
@@ -333,10 +366,14 @@ export async function runCli(
         }
         return 0;
       }
+      // `return await`, not `return`: a promise returned out of a `try` is not
+      // caught by its `catch`, and these two are the commands that now refuse
+      // an unresolved Wrangler environment. Without the await that refusal
+      // reached the operator as an unhandled rejection and a stack trace.
       case "run":
-        return runInjected(flags);
+        return await runInjected(flags);
       case "proxy":
-        return runProxied(flags);
+        return await runProxied(flags);
       default:
         throw new Error(`unknown command: ${command}`);
     }
@@ -581,25 +618,17 @@ async function runMasterKeys(flags: Flags, io: { log: (value: string) => void })
 }
 
 async function runInjected(flags: Flags): Promise<number> {
-  const { client, repo, project, env } = session(flags);
+  const { client, cwd, project, env } = session(flags);
   if (flags.rest.length === 0) throw new Error("usage: vault run -- CMD");
-  const required = repo.wrangler?.required ?? [];
-  if (required.length === 0) {
-    throw new Error(
-      "vault run requires secrets.required in the repository Wrangler config",
-    );
-  }
-  const listed = await client.exportSecrets(project, env);
-  const byName = new Map(listed.secrets.map((secret) => [secret.name, secret.value]));
-  const missing = required.filter((name) => !byName.has(name));
-  if (missing.length > 0)
-    throw new Error(`vault missing required names: ${missing.join(", ")}`);
-  const injected: Record<string, string> = {};
-  for (const name of required) {
-    const value = byName.get(name);
-    if (value == null) throw new Error(`vault value unavailable for ${name}`);
-    injected[name] = value;
-  }
+  // One resolver for `vault run` and the Vite plugin. Two of them drifted once
+  // already: only this one rejected an empty value.
+  const injected = await loadRequiredSecretValues({
+    cwd,
+    client,
+    project,
+    env,
+    ...(flags.wranglerEnv != null ? { wranglerEnv: flags.wranglerEnv } : {}),
+  });
   return spawnCommand(flags.rest, {
     ...process.env,
     ...injected,
@@ -654,7 +683,7 @@ function helpText(): string {
   vault routes list | put SECRET --preset NAME
   vault audit [--limit N] [--cursor CURSOR]
   vault master-keys status|prepare|retire FINGERPRINT --yes
-  vault run -- CMD                          # injects only secrets.required
+  vault run [--wrangler-env NAME] -- CMD    # injects only secrets.required
   vault proxy -- CMD
   vault push                               # explicit provider synchronization
   vault init                               # local development only

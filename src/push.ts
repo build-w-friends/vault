@@ -10,6 +10,11 @@
  * whose names the vault cannot supply throws before anything is written, so a
  * push is all-or-nothing per destination rather than partially applied.
  *
+ * The Cloudflare half is per Wrangler environment: the caller resolves which
+ * one, and both the script name and the required names come from it. A named
+ * environment deploys as its own Worker, so pushing the top-level list there
+ * would write the wrong set to the wrong script.
+ *
  * @see {@link https://vault.buildwithfriends.dev/operations/import-from-infisical/}
  */
 import type { VaultClient } from "./client.ts";
@@ -23,7 +28,11 @@ import {
   pushGithubSecrets,
   type GithubPushTarget,
 } from "./push-github.ts";
-import { githubOwnerRepo, type RepoContext } from "./repo-config.ts";
+import {
+  githubOwnerRepo,
+  type RepoContext,
+  type WranglerEnvironmentConfig,
+} from "./repo-config.ts";
 import type { ProcessEnvironment } from "./types.ts";
 
 export type PushReport = {
@@ -58,6 +67,7 @@ export async function loadVaultValues(
 
 export async function pushDestinations(input: {
   repo: RepoContext;
+  wrangler: WranglerEnvironmentConfig | null;
   values: Record<string, string>;
   names?: string[];
   githubRepo?: string;
@@ -68,14 +78,14 @@ export async function pushDestinations(input: {
   const fetchImpl = input.fetchImpl ?? fetch;
   const report: PushReport = { cloudflare: [], github: [], skipped: [] };
   const filter = input.names != null ? new Set(input.names) : null;
-  const required = input.repo.wrangler?.required ?? [];
+  const required = input.wrangler?.required ?? [];
   const cloudflareNames = required.filter((name) => filter == null || filter.has(name));
   const githubNames = (input.repo.vault.github?.secrets ?? []).filter(
     (name) => filter == null || filter.has(name),
   );
 
   const cfToken = cloudflareTokenFromEnv(processEnv);
-  const wrangler = input.repo.wrangler;
+  const wrangler = input.wrangler;
   if (cloudflareNames.length > 0) {
     if (cfToken == null) report.skipped.push("cloudflare (no CLOUDFLARE_API_TOKEN)");
     else if (wrangler == null || wrangler.accountId == null || wrangler.name == null) {

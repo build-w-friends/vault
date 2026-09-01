@@ -1,8 +1,12 @@
 /**
  * `vault status` — comparing required names against three sources.
  *
- * Vault is compared against the runtime `secrets.required` list; Cloudflare and
- * GitHub are compared against what each provider actually holds.
+ * Vault is compared against the runtime `secrets.required` list of the selected
+ * Wrangler environment; Cloudflare and GitHub are compared against what each
+ * provider actually holds. The caller resolves that environment, so an
+ * environment-scoped Worker is never checked against the top-level list —
+ * that under-reports, and a genuinely missing production secret then reads as
+ * healthy.
  *
  * A provider with no token in the environment reports `skipped`, which is
  * deliberately not `ok`. The distinction is the whole point of the command: a
@@ -14,7 +18,7 @@
 import type { VaultClient } from "./client.ts";
 import { cloudflareTokenFromEnv, listCloudflareSecretNames } from "./push-cloudflare.ts";
 import { githubTokenFromEnv, listGithubSecretNames } from "./push-github.ts";
-import type { RepoContext } from "./repo-config.ts";
+import type { RepoContext, WranglerEnvironmentConfig } from "./repo-config.ts";
 import type { ProcessEnvironment } from "./types.ts";
 
 export type StatusReport = {
@@ -28,8 +32,11 @@ export function missingNames(required: string[], present: string[]): string[] {
   return required.filter((name) => !held.has(name));
 }
 
-export function requiredVaultNames(repo: RepoContext): string[] {
-  const runtimeRequired = repo.wrangler?.required ?? [];
+export function requiredVaultNames(
+  repo: RepoContext,
+  wrangler: WranglerEnvironmentConfig | null,
+): string[] {
+  const runtimeRequired = wrangler?.required ?? [];
   const destinationRequired =
     repo.vault.authority === "infisical-shadow" ? [] : (repo.vault.github?.secrets ?? []);
   return [...new Set([...runtimeRequired, ...destinationRequired])];
@@ -38,6 +45,7 @@ export function requiredVaultNames(repo: RepoContext): string[] {
 export async function collectStatus(input: {
   client: VaultClient;
   repo: RepoContext;
+  wrangler: WranglerEnvironmentConfig | null;
   project: string;
   env: string;
   processEnv?: ProcessEnvironment;
@@ -45,17 +53,19 @@ export async function collectStatus(input: {
 }): Promise<StatusReport> {
   const processEnv = input.processEnv ?? process.env;
   const fetchImpl = input.fetchImpl ?? fetch;
-  const required = input.repo.wrangler?.required ?? [];
+  const wrangler = input.wrangler;
+  const required = wrangler?.required ?? [];
   const vaultNames = new Set(
     (await input.client.listSecretMeta(input.project, input.env)).secrets.map(
       (secret) => secret.name,
     ),
   );
-  const vaultMissing = missingNames(requiredVaultNames(input.repo), [...vaultNames]);
+  const vaultMissing = missingNames(requiredVaultNames(input.repo, wrangler), [
+    ...vaultNames,
+  ]);
 
   let cloudflareMissing: string[] | "skipped" = "skipped";
   const cfToken = cloudflareTokenFromEnv(processEnv);
-  const wrangler = input.repo.wrangler;
   if (cfToken != null && wrangler?.accountId != null && wrangler.name != null) {
     const present = await listCloudflareSecretNames(
       {

@@ -5,6 +5,11 @@
  * "give this process the vault": only declared names are exported, never
  * everything the environment holds.
  *
+ * The list belongs to one Wrangler environment, so the environment is resolved
+ * first and an unresolved one is an error. Falling back to the top-level list
+ * for an environment-scoped Worker injects a set that is quietly wrong, which
+ * is the failure this whole path exists to prevent.
+ *
  * A declared name with no value is an error, not an empty string. An empty
  * string is a second, untested configuration of whatever consumes it, and the
  * failure it produces is a capability that silently does nothing.
@@ -12,7 +17,11 @@
  * @see {@link https://vault.buildwithfriends.dev/reference/configuration/}
  */
 import { VaultClient } from "./client.ts";
-import { loadRepoContext } from "./repo-config.ts";
+import {
+  describeWranglerEnvironment,
+  loadRepoContext,
+  resolveWranglerEnvironment,
+} from "./repo-config.ts";
 
 export class InjectError extends Error {
   constructor(message: string) {
@@ -21,16 +30,28 @@ export class InjectError extends Error {
   }
 }
 
-export async function loadRequiredSecretValues(input: {
+export type InjectInput = {
   cwd: string;
   client: VaultClient;
   project: string;
   env: string;
-}): Promise<Record<string, string>> {
+  wranglerEnv?: string;
+};
+
+export async function loadRequiredSecretValues(
+  input: InjectInput,
+): Promise<Record<string, string>> {
   const repo = loadRepoContext(input.cwd);
-  const required = repo.wrangler?.required ?? [];
+  const wrangler = resolveWranglerEnvironment(repo, {
+    vaultEnv: input.env,
+    ...(input.wranglerEnv != null ? { wranglerEnv: input.wranglerEnv } : {}),
+  });
+  const required = wrangler?.required ?? [];
   if (required.length === 0) {
-    throw new InjectError("wrangler.jsonc has no secrets.required; nothing to inject");
+    throw new InjectError(
+      `${repo.wrangler?.path ?? "wrangler.jsonc"} declares no secrets.required for ` +
+        `${describeWranglerEnvironment(wrangler)}; nothing to inject`,
+    );
   }
   const listed = await input.client.exportSecrets(input.project, input.env);
   const byName = new Map(listed.secrets.map((secret) => [secret.name, secret.value]));
@@ -42,7 +63,10 @@ export async function loadRequiredSecretValues(input: {
     else values[name] = value;
   }
   if (missing.length > 0) {
-    throw new InjectError(`missing required secrets: ${missing.join(", ")}`);
+    throw new InjectError(
+      `missing required secrets: ${missing.join(", ")} ` +
+        `(${input.project}/${input.env}, ${describeWranglerEnvironment(wrangler)})`,
+    );
   }
   return values;
 }
@@ -53,12 +77,7 @@ export function applyProcessEnv(values: Record<string, string>): void {
   }
 }
 
-export async function injectRequiredIntoProcess(input: {
-  cwd: string;
-  client: VaultClient;
-  project: string;
-  env: string;
-}): Promise<string[]> {
+export async function injectRequiredIntoProcess(input: InjectInput): Promise<string[]> {
   const values = await loadRequiredSecretValues(input);
   applyProcessEnv(values);
   return Object.keys(values);

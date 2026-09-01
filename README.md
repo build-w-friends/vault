@@ -82,7 +82,11 @@ vault keys revoke vault_sys_PREFIX --yes
 ```
 
 `vault run` exports only names declared in the target Wrangler
-`secrets.required` list and fails closed when any is missing. `vault proxy`
+`secrets.required` list and fails closed when any is missing. When that config
+declares environments, the list belongs to one of them: `--wrangler-env NAME`
+or `vault.json`'s `wranglerEnvironments` selects it, and an unselected
+environment is an error rather than a fall back to the top-level list.
+`vault proxy`
 gives brokered tools dummy environment values and injects the real value only
 into an allowlisted HTTPS request. Neither command writes secret values to the
 repository.

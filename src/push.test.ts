@@ -17,6 +17,7 @@ describe("secret destinations", () => {
     expect(
       pushDestinations({
         repo,
+        wrangler: null,
         values: { GITHUB_TOKEN: "secret" },
         githubRepo: "attacker/redirect",
         env: { GH_TOKEN: "ghp_operator_token" },
