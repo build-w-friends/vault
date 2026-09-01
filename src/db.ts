@@ -1,3 +1,21 @@
+/**
+ * `VaultStore` — every SQL statement, and the encryption boundary around them.
+ *
+ * Values are encrypted on the way in and decrypted on the way out here, so no
+ * route handler ever holds a ciphertext and no query ever holds a plaintext
+ * name. A secret's name is written twice: `key_encrypted` for retrieval and
+ * `key_hash` (keyed HMAC) for lookup and uniqueness.
+ *
+ * Audit paging is keyset, not offset: `(created_at DESC, id DESC)` matches the
+ * index exactly, so a deep page is a range scan and a row inserted mid-scroll
+ * cannot shift the window.
+ *
+ * `StoreError` carries the HTTP status a failure should surface, which is what
+ * lets `app.ts` translate a constraint violation into a 404 or 409 without
+ * re-deriving the reason.
+ *
+ * @see {@link https://vault.buildwithfriends.com/reference/database/}
+ */
 import type { VaultCrypto } from "./crypto.ts";
 import type {
   ApiKeyRecord,

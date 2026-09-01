@@ -6,6 +6,13 @@ credential authority. Infisical remains the only authoring location and every
 existing runtime, deploy, and CI consumer remains on Infisical until a separate
 cutover is approved.
 
+**The full documentation is at <https://vault.buildwithfriends.com>** — concepts,
+the complete CLI and HTTP references, the database schema, and the operational
+runbooks. It is built from [`apps/vault-docs`](../../apps/vault-docs). This file
+stays the operator's entry point with the checkout open; the site is what you
+read without one. Neither is a copy of the other, and a change to this package's
+routes, commands, schema, or procedures updates both.
+
 The only production values outside the encrypted D1 database are the two
 envelope-encryption roots and one-time bootstrap token. They live in Cloudflare
 Secrets Store and are bound only to the `bwf-vault` Worker. Secret names,

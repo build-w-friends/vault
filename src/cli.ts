@@ -1,4 +1,22 @@
 #!/usr/bin/env bun
+/**
+ * The `vault` operator CLI.
+ *
+ * Two argument forms are rejected rather than supported, both because they put
+ * a credential into shell history: `--api-key <value>`, and `NAME=value` on
+ * `secrets set`. Values come from hidden input, stdin, or the environment.
+ * Every destructive command requires an explicit `--yes`.
+ *
+ * `run` and `proxy` are the two commands that spawn something. Both strip
+ * `VAULT_API_KEY` from the child environment, so a command given secrets cannot
+ * turn around and ask the vault for the rest of them.
+ *
+ * `push` is guarded by `assertProviderPushAllowed`: while `vault.json` declares
+ * Infisical authoritative, provider synchronization fails closed. That refusal
+ * is what keeps a shadow import from becoming an unapproved cutover.
+ *
+ * @see {@link https://vault.buildwithfriends.com/reference/cli/}
+ */
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";

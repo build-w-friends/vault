@@ -1,3 +1,16 @@
+/**
+ * Resolving a Wrangler config's `secrets.required` list into process values.
+ *
+ * That list is the contract, and it is the reason `vault run` is narrower than
+ * "give this process the vault": only declared names are exported, never
+ * everything the environment holds.
+ *
+ * A declared name with no value is an error, not an empty string. An empty
+ * string is a second, untested configuration of whatever consumes it, and the
+ * failure it produces is a capability that silently does nothing.
+ *
+ * @see {@link https://vault.buildwithfriends.com/reference/configuration/}
+ */
 import { VaultClient } from "./client.ts";
 import { loadRepoContext } from "./repo-config.ts";
 

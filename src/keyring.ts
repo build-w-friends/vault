@@ -1,3 +1,22 @@
+/**
+ * The set of master-key wraps, and the two-slot rotation ceremony over them.
+ *
+ * Each row in `master_key_wraps` is one root fingerprint and the vault data key
+ * wrapped under that root. `open` resolves the configured root to its wrap and
+ * unwraps the data key for the request.
+ *
+ * The one condition under which key material is *generated* is a database with
+ * zero wraps. Everything else fails closed: a configured root with no wrap
+ * throws rather than initializing, because initializing there would create a
+ * second vault sitting on top of rows nobody can read — while looking healthy.
+ *
+ * `prepare` refuses a slot holding the active root (409), since that would look
+ * like a successful rotation and leave one root. `retire` refuses the active
+ * wrap (409), since removing it makes the database unreadable by the running
+ * Worker.
+ *
+ * @see {@link https://vault.buildwithfriends.com/operations/master-key-rotation/}
+ */
 import {
   MasterKeyError,
   VaultCrypto,

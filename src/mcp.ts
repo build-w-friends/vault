@@ -1,3 +1,18 @@
+/**
+ * The MCP surface, built so an agent can safely hold a key to it.
+ *
+ * Four tools: `list_secrets` (names and kinds), `list_routes`, `create_sealed`
+ * (random value, not returned), and `mint_proxy_help`. None returns a secret
+ * value, and that is the design rather than an omission — `get_secret` is
+ * answered with an explicit "not available" so its absence cannot read as an
+ * oversight to be fixed later.
+ *
+ * Authentication, scope, and permission come from the same middleware and the
+ * same `policy.ts` decisions as the HTTP routes; this is a second transport,
+ * not a second authority.
+ *
+ * @see {@link https://vault.buildwithfriends.com/concepts/brokering/}
+ */
 import type { Context } from "hono";
 
 import { StoreError, VaultStore } from "./db.ts";

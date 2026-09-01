@@ -1,3 +1,13 @@
+/**
+ * API-key and secret-value generation.
+ *
+ * A key is a type-tagged prefix plus 128 random bits. The first 27 characters
+ * are the *prefix*, which is what identifies a key in audit rows, `keys list`,
+ * and revocation — it is safe to log, and the full key is never stored at all,
+ * only its keyed hash.
+ *
+ * @see {@link https://vault.buildwithfriends.com/concepts/keys-and-policy/}
+ */
 import type { KeyType } from "./types.ts";
 
 export function randomApiKey(type: KeyType): { plaintext: string; prefix: string } {

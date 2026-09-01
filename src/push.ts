@@ -1,3 +1,17 @@
+/**
+ * Explicit synchronization of vault values out to Cloudflare and GitHub.
+ *
+ * This is the one path that writes a credential to another system, so it is
+ * never implicit. `vault push` is an operator command, and `cli.ts` refuses it
+ * outright while `vault.json` sets `authority` to `infisical-shadow` — the
+ * mechanism that keeps a shadow import from becoming an accidental cutover.
+ *
+ * A missing provider token skips that destination and says so. A destination
+ * whose names the vault cannot supply throws before anything is written, so a
+ * push is all-or-nothing per destination rather than partially applied.
+ *
+ * @see {@link https://vault.buildwithfriends.com/operations/infisical-shadow/}
+ */
 import type { VaultClient } from "./client.ts";
 import {
   cloudflareTokenFromEnv,

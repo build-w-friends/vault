@@ -1,3 +1,14 @@
+/**
+ * Route templates for the brokering proxy.
+ *
+ * A route says three things: which host it covers, which headers to strip from
+ * the child's request, and how to attach the real value. The strip list matters
+ * as much as the inject template — without it the dummy the child sent would
+ * survive alongside the injected credential, and the upstream would see two
+ * conflicting values for the same header.
+ *
+ * @see {@link https://vault.buildwithfriends.com/concepts/brokering/}
+ */
 export type RoutePreset = {
   host: string;
   inject: string;

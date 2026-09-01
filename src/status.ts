@@ -1,3 +1,16 @@
+/**
+ * `vault status` — comparing required names against three sources.
+ *
+ * Vault is compared against the runtime `secrets.required` list; Cloudflare and
+ * GitHub are compared against what each provider actually holds.
+ *
+ * A provider with no token in the environment reports `skipped`, which is
+ * deliberately not `ok`. The distinction is the whole point of the command: a
+ * check that did not run has proven nothing, and collapsing the two states is
+ * how a green status starts covering a missing secret.
+ *
+ * @see {@link https://vault.buildwithfriends.com/start/daily-use/}
+ */
 import type { VaultClient } from "./client.ts";
 import { cloudflareTokenFromEnv, listCloudflareSecretNames } from "./push-cloudflare.ts";
 import { githubTokenFromEnv, listGithubSecretNames } from "./push-github.ts";

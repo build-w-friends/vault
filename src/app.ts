@@ -1,3 +1,25 @@
+/**
+ * The vault HTTP API.
+ *
+ * Middleware attaches a `VaultStore` and resolves the bearer token to an
+ * `ApiKeyRecord` before any route body runs; `POST /v1/bootstrap` is the single
+ * exception, authenticated instead by a constant-time comparison against the
+ * Secrets Store bootstrap token.
+ *
+ * Every request schema is `.strict()`. An unknown field is a 400 rather than a
+ * silently ignored key, so a caller sending a field this Worker does not
+ * implement finds out immediately instead of believing it took effect.
+ *
+ * Authority is never decided here — routes call into `policy.ts` and let its
+ * `PolicyError` / `StoreError` / `KeyringError` carry the status out through
+ * `onError`. An unrecognized error logs structurally and answers a generic 500,
+ * because an internal message is a description of the vault's internals.
+ *
+ * Audit rows are appended on the same path as the effect they describe, so a
+ * successful mutation cannot leave no trace.
+ *
+ * @see {@link https://vault.buildwithfriends.com/reference/http-api/}
+ */
 import { Hono } from "hono";
 import { z } from "zod";
 

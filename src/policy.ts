@@ -1,3 +1,24 @@
+/**
+ * The single place a key's authority is decided.
+ *
+ * Two key types: `user` keys are operators (manage keys, projects, and audit;
+ * unscoped) and `system` keys are machines (scoped, and never able to manage
+ * anything). A system key's `mode` splits it further — `inject` may decrypt
+ * values within its scopes, `broker` may not decrypt anything at all.
+ *
+ * `broker` is what makes `vault proxy` meaningful: it can list names, list
+ * routes, and create sealed random secrets, so a process can mint and use a
+ * credential it is never permitted to read.
+ *
+ * The `sealed` kind is checked here rather than at a call site: no key type,
+ * permission, or query parameter returns a sealed value, which is what makes
+ * "write-only" a property of the system instead of a convention.
+ *
+ * Keep these decisions in this module. A policy check inlined into a route is
+ * a rule that the next route silently does not get.
+ *
+ * @see {@link https://vault.buildwithfriends.com/concepts/keys-and-policy/}
+ */
 import type { ApiKeyRecord, SecretKind } from "./types.ts";
 
 export class PolicyError extends Error {

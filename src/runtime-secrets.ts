@@ -1,3 +1,18 @@
+/**
+ * Reading the Worker's required runtime configuration.
+ *
+ * The three Secrets Store roots and both vars are *required*: every accessor
+ * here throws on absence rather than returning a default. Vault has no mode in
+ * which a missing root selects a fallback — presence of a credential must never
+ * decide whether a capability is on, and an empty default would be a second,
+ * untested configuration of the product.
+ *
+ * `resolveMasterKeys` returns both slots because rotation needs the inactive
+ * one: `POST /v1/master-keys/prepare` wraps the data key for the slot that is
+ * not currently live.
+ *
+ * @see {@link https://vault.buildwithfriends.com/reference/configuration/}
+ */
 import { MasterKeyError } from "./crypto.ts";
 
 export async function readRuntimeSecret(

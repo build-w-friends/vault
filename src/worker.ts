@@ -1,3 +1,21 @@
+/**
+ * The `bwf-vault` Worker entry point.
+ *
+ * Every request resolves both root-key slots and the bootstrap token from
+ * Secrets Store, selects the active root by `ACTIVE_MASTER_KEY`, opens the
+ * keyring, and builds the Hono application around the resulting crypto.
+ *
+ * A `MasterKeyError` anywhere in that chain answers 500 and logs one structured
+ * line. The Worker does not serve with key material it could not verify: a
+ * missing root, an unparseable one, or one with no prepared wrap are all
+ * configuration errors, not conditions to degrade through.
+ *
+ * `scheduled` runs daily and prunes audit rows past `AUDIT_RETENTION_DAYS`. It
+ * opens the keyring exactly as a request does, so a misconfigured root fails
+ * the cron rather than pruning against the wrong database.
+ *
+ * @see {@link https://vault.buildwithfriends.com/concepts/architecture/}
+ */
 import { createApp } from "./app.ts";
 import { MasterKeyError } from "./crypto.ts";
 import { VaultStore } from "./db.ts";

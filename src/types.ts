@@ -1,3 +1,17 @@
+/**
+ * The vault's shared vocabulary.
+ *
+ * `SecretKind` is the one type here that carries a policy decision rather than
+ * a shape: `config` is passed through to a brokered child, `secret` is dummied,
+ * and `sealed` is never returned by any route. `policy.ts` is where each of
+ * those is enforced.
+ *
+ * `AuditAction` is deliberately a closed union. Adding an audited operation
+ * means adding a member, which makes the audit surface reviewable as a list
+ * instead of discoverable by grep.
+ *
+ * @see {@link https://vault.buildwithfriends.com/concepts/secret-kinds/}
+ */
 export type KeyType = "user" | "system";
 export type Permission = "read" | "readwrite" | "full";
 export type KeyMode = "inject" | "broker";

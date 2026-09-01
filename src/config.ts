@@ -1,3 +1,16 @@
+/**
+ * The operator's stored credential at `~/.config/poc-vault/config.json`.
+ *
+ * Written with mode 0600 inside a directory forced to 0700, and `chmod`ed after
+ * writing rather than trusting the create mode, since `writeFileSync`'s mode is
+ * masked by the process umask.
+ *
+ * `resolveClientOptions` fixes the precedence every command shares: explicit
+ * flags, then environment, then this file. A missing URL or key is an error
+ * here rather than a request that fails later with a less useful message.
+ *
+ * @see {@link https://vault.buildwithfriends.com/start/install/}
+ */
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";

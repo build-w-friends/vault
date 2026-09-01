@@ -1,3 +1,19 @@
+/**
+ * Reading `vault.json` and the Wrangler config it points at.
+ *
+ * Both are found by walking up from the working directory, which is what lets
+ * `vault` run from anywhere inside a repository.
+ *
+ * `readRequiredSecretNames` reads exactly one field — `secrets.required` — and
+ * that list is the contract for `vault run`, `vault status`, and the Vite
+ * plugin. Wrangler configs are JSONC, so this parses comments rather than
+ * requiring a comment-free copy.
+ *
+ * `authority` is read here and enforced in `cli.ts`: `infisical-shadow` means
+ * Infisical is authoritative and provider push must fail closed.
+ *
+ * @see {@link https://vault.buildwithfriends.com/reference/configuration/}
+ */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 

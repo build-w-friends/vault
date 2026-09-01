@@ -1,3 +1,16 @@
+/**
+ * `VaultClient` — the typed HTTP client for the vault API.
+ *
+ * Shared by the CLI and the Vite plugin so both speak one wire contract. It
+ * holds an API key for the lifetime of a command and never persists one;
+ * writing credentials to disk belongs to `config.ts` alone.
+ *
+ * `exportSecrets` is the call behind `vault run` and `vault push`: it asks for
+ * every non-sealed value at once rather than issuing one request per name, so
+ * an injected process makes a single round trip.
+ *
+ * @see {@link https://vault.buildwithfriends.com/reference/http-api/}
+ */
 import type {
   ApiKeyMeta,
   AuditRecord,

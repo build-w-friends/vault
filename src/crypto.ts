@@ -1,3 +1,24 @@
+/**
+ * Envelope encryption for the vault.
+ *
+ * Two levels: a 32-byte *root* key lives in Cloudflare Secrets Store and wraps
+ * a 32-byte *data* key, and the data key encrypts every row. The data key is
+ * stored only in wrapped form, once per root fingerprint, so rotating a root
+ * means adding a wrap rather than decrypting and rewriting the database.
+ *
+ * HKDF-SHA256 splits the data key into two keys with different `info` labels
+ * so the same bytes never both encrypt and authenticate:
+ *
+ * - `"encrypt"` derives the AES-GCM-256 key used for every stored value.
+ * - `"hmac"` derives the HMAC-SHA256 key used for lookup hashes.
+ *
+ * A lookup hash is what lets D1 find a row by a name it does not store. It is
+ * keyed, so it is not a dictionary attack away from the plaintext name, and
+ * deterministic, so `getSecretByName` is an indexed lookup instead of a
+ * decrypt-everything scan.
+ *
+ * @see {@link https://vault.buildwithfriends.com/concepts/encryption/}
+ */
 const IV_LENGTH = 12;
 const MASTER_KEY_BYTES = 32;
 const DATA_KEY_BYTES = 32;

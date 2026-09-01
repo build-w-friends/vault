@@ -1,3 +1,28 @@
+/**
+ * The brokering proxy behind `vault proxy`.
+ *
+ * `vault run` answers "this process needs a secret". This answers the harder
+ * case: the process needs to make an authenticated request and should not hold
+ * the credential — the shape of an agent running somebody else's code.
+ *
+ * A per-run CA signs short-lived leaf certificates for routed hosts only. The
+ * child is spawned trusting that CA (five separate CA environment variables,
+ * because the tools that need to trust it are written in different languages),
+ * with placeholder values in place of real secrets and with `VAULT_API_KEY`
+ * and `VAULT_API_URL` deleted so it cannot ask the vault for anything.
+ *
+ * `CONNECT` to an unrouted host is refused with 403. This is an allowlist, not
+ * an interceptor. On a routed host the proxy strips the headers the route
+ * declares (including the dummy the child just sent), injects the real value,
+ * and forwards.
+ *
+ * What it is not: a sandbox. A process that ignores `HTTPS_PROXY` is not
+ * intercepted — it simply fails to authenticate, holding only a dummy. And
+ * whatever the routed API returns is visible to the child; this protects the
+ * credential, not the data it unlocks.
+ *
+ * @see {@link https://vault.buildwithfriends.com/concepts/brokering/}
+ */
 import { generateKeyPairSync } from "node:crypto";
 import {
   createServer as createHttpServer,
