@@ -13,8 +13,9 @@
  * environment nobody selected would otherwise inject a set that is wrong and
  * looks fine.
  *
- * `authority` is read here and enforced in `cli.ts`: `infisical-shadow` means
- * Infisical is authoritative and provider push must fail closed.
+ * `authority` is read here and enforced in `cli.ts`: absent or `vault` means
+ * the vault is the source of truth; any other value names another system as
+ * authoritative and makes provider push fail closed.
  *
  * @see {@link https://vault.buildwithfriends.dev/reference/configuration/}
  * @see {@link https://developers.cloudflare.com/workers/wrangler/environments/}
@@ -26,13 +27,18 @@ import { parseJsonc } from "./jsonc.ts";
 
 type GithubDestination = {
   repo: string;
+  /** Environment the GitHub destination's values are read from. Defaults to
+   * the session environment when absent — the runtime and CI names usually
+   * live in different environments, and this is what lets one `vault.json`
+   * name both sources. */
+  env?: string;
   secrets: string[];
 };
 
 type VaultJson = {
   project?: string;
   env?: string;
-  authority?: "vault" | "infisical-shadow";
+  authority?: string;
   wrangler?: string;
   /**
    * Which Wrangler environment each vault environment's contract lives in.

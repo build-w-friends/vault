@@ -8,7 +8,7 @@ const PROJECT = "bwf-shadow";
 
 async function main(argv: string[]): Promise<void> {
   if (argv.length !== 1 || argv[0] !== "posthog") {
-    throw new Error("usage: canary-shadow.ts posthog");
+    throw new Error("usage: canary-posthog.ts posthog");
   }
   await postHogCanary();
   console.log("PASS  PostHog consumer canary accepted");

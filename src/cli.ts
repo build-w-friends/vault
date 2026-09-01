@@ -16,9 +16,10 @@
  * the two are separate namespaces and neither is inferred from the other. A
  * repository records the correspondence once in `vault.json`.
  *
- * `push` is guarded by `assertProviderPushAllowed`: while `vault.json` declares
- * Infisical authoritative, provider synchronization fails closed. That refusal
- * is what keeps a shadow import from becoming an unapproved cutover.
+ * `push` is guarded by `assertProviderPushAllowed`: while `vault.json` names
+ * anything other than the vault as `authority`, provider synchronization fails
+ * closed. That refusal is what keeps a replica from overwriting the system
+ * that actually owns the values.
  *
  * @see {@link https://vault.buildwithfriends.dev/reference/cli/}
  */
@@ -349,10 +350,16 @@ export async function runCli(
           session(flags);
         assertProviderPushAllowed(repo.vault.authority);
         const values = await loadVaultValues(client, project, env);
+        const githubEnv = repo.vault.github?.env;
+        const githubValues =
+          githubEnv != null && githubEnv !== env
+            ? await loadVaultValues(client, project, githubEnv)
+            : values;
         const report = await pushDestinations({
           repo,
           wrangler: wranglerEnvironment(),
           values,
+          githubValues,
           githubRepo,
         });
         for (const name of report.cloudflare) io.log(`cloudflare: ${name}`);
@@ -384,9 +391,9 @@ export async function runCli(
 }
 
 export function assertProviderPushAllowed(authority: string | undefined): void {
-  if (authority === "infisical-shadow") {
+  if (authority != null && authority !== "vault") {
     throw new Error(
-      "provider push is disabled while Infisical is authoritative for this shadow project",
+      `provider push is disabled while vault.json names another authority (${authority})`,
     );
   }
 }

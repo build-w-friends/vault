@@ -80,11 +80,12 @@ describe("cli argv", () => {
     expect(errors.join("\n")).toContain("usage: vault run -- CMD");
   });
 
-  test("blocks provider writes from an Infisical shadow project", () => {
-    expect(() => assertProviderPushAllowed("infisical-shadow")).toThrow(
-      "provider push is disabled while Infisical is authoritative",
+  test("blocks provider writes while another system is authoritative", () => {
+    expect(() => assertProviderPushAllowed("external-system")).toThrow(
+      "provider push is disabled while vault.json names another authority",
     );
     expect(() => assertProviderPushAllowed("vault")).not.toThrow();
+    expect(() => assertProviderPushAllowed(undefined)).not.toThrow();
   });
 
   test("initializes credentials with an exclusive private create", () => {

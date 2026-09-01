@@ -3,19 +3,22 @@
  *
  * This is the one path that writes a credential to another system, so it is
  * never implicit. `vault push` is an operator command, and `cli.ts` refuses it
- * outright while `vault.json` sets `authority` to `infisical-shadow` — the
- * mechanism that keeps a shadow import from becoming an accidental cutover.
+ * outright while `vault.json` names anything other than the vault as
+ * `authority` — the mechanism that keeps a replica from overwriting the system
+ * that owns the values.
  *
  * A missing provider token skips that destination and says so. A destination
  * whose names the vault cannot supply throws before anything is written, so a
- * push is all-or-nothing per destination rather than partially applied.
+ * push is all-or-nothing per destination rather than partially applied. The
+ * GitHub destination reads from its own environment (`github.env`) because the
+ * runtime and CI names live in different environments.
  *
  * The Cloudflare half is per Wrangler environment: the caller resolves which
  * one, and both the script name and the required names come from it. A named
  * environment deploys as its own Worker, so pushing the top-level list there
  * would write the wrong set to the wrong script.
  *
- * @see {@link https://vault.buildwithfriends.dev/operations/import-from-infisical/}
+ * @see {@link https://vault.buildwithfriends.dev/reference/cli/}
  */
 import type { VaultClient } from "./client.ts";
 import {
@@ -69,6 +72,9 @@ export async function pushDestinations(input: {
   repo: RepoContext;
   wrangler: WranglerEnvironmentConfig | null;
   values: Record<string, string>;
+  /** Values for the GitHub destination when `github.env` differs from the
+   * session environment. Defaults to `values`. */
+  githubValues?: Record<string, string>;
   names?: string[];
   githubRepo?: string;
   env?: ProcessEnvironment;
@@ -122,7 +128,7 @@ export async function pushDestinations(input: {
         throw new Error("trusted GitHub repository must match vault.json github.repo");
       }
       const target: GithubPushTarget = { repo: repository, token: ghToken };
-      const values = pick(input.values, githubNames);
+      const values = pick(input.githubValues ?? input.values, githubNames);
       const missing = githubNames.filter((name) => values[name] == null);
       if (missing.length > 0) {
         throw new Error(`vault missing names for GitHub: ${missing.join(", ")}`);

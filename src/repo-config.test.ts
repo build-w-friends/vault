@@ -30,13 +30,13 @@ describe("repo config", () => {
       JSON.stringify({
         project: "bwf",
         env: "dev",
-        authority: "infisical-shadow",
-        github: { repo: "acme/app", secrets: ["CI_TOKEN"] },
+        github: { repo: "acme/app", env: "prod-ci", secrets: ["CI_TOKEN"] },
       }),
     );
     const ctx = loadRepoContext(root);
     expect(ctx.vault.project).toBe("bwf");
-    expect(ctx.vault.authority).toBe("infisical-shadow");
+    expect(ctx.vault.authority).toBeUndefined();
+    expect(ctx.vault.github?.env).toBe("prod-ci");
     expect(ctx.vault.github?.secrets).toEqual(["CI_TOKEN"]);
     const wrangler = resolveWranglerEnvironment(ctx, { vaultEnv: "dev" });
     expect(wrangler?.environment).toBe(null);

@@ -24,4 +24,17 @@ describe("secret destinations", () => {
       }),
     ).rejects.toThrow("trusted GitHub repository must match vault.json github.repo");
   });
+
+  test("reads the GitHub destination from its own values, not the session's", async () => {
+    expect(
+      pushDestinations({
+        repo,
+        wrangler: null,
+        values: { GITHUB_TOKEN: "session-env-value" },
+        githubValues: {},
+        githubRepo: "build-w-friends/buildwfriends",
+        env: { GH_TOKEN: "ghp_operator_token" },
+      }),
+    ).rejects.toThrow("vault missing names for GitHub: GITHUB_TOKEN");
+  });
 });

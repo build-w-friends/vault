@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
-import { cloudflareVerifyUrl } from "../scripts/verify-shadow.ts";
+import { cloudflareVerifyUrl } from "../scripts/verify-providers.ts";
 
-describe("shadow vault provider verification", () => {
+describe("vault provider verification", () => {
   test("routes account tokens to the account-owned verification endpoint", () => {
     expect(cloudflareVerifyUrl("cfat_example")).toContain(
       "/accounts/00000000000000000000000000000000/tokens/verify",

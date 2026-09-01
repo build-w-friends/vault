@@ -1,9 +1,12 @@
 /**
  * `vault status` — comparing required names against three sources.
  *
- * Vault is compared against the runtime `secrets.required` list of the selected
- * Wrangler environment; Cloudflare and GitHub are compared against what each
- * provider actually holds. The caller resolves that environment, so an
+ * Vault is compared against the selected Wrangler environment's
+ * `secrets.required` list in the session vault environment, and against the
+ * GitHub destination's names in that destination's own environment
+ * (`github.env`), because the runtime and CI names live in different
+ * environments. Cloudflare and GitHub are compared against what each provider
+ * actually holds. The caller resolves the Wrangler environment, so an
  * environment-scoped Worker is never checked against the top-level list —
  * that under-reports, and a genuinely missing production secret then reads as
  * healthy.
@@ -32,16 +35,6 @@ export function missingNames(required: string[], present: string[]): string[] {
   return required.filter((name) => !held.has(name));
 }
 
-export function requiredVaultNames(
-  repo: RepoContext,
-  wrangler: WranglerEnvironmentConfig | null,
-): string[] {
-  const runtimeRequired = wrangler?.required ?? [];
-  const destinationRequired =
-    repo.vault.authority === "infisical-shadow" ? [] : (repo.vault.github?.secrets ?? []);
-  return [...new Set([...runtimeRequired, ...destinationRequired])];
-}
-
 export async function collectStatus(input: {
   client: VaultClient;
   repo: RepoContext;
@@ -60,9 +53,22 @@ export async function collectStatus(input: {
       (secret) => secret.name,
     ),
   );
-  const vaultMissing = missingNames(requiredVaultNames(input.repo, wrangler), [
-    ...vaultNames,
-  ]);
+  const github = input.repo.vault.github;
+  const githubSourceEnv = github?.env ?? input.env;
+  const githubSourceNames =
+    github == null || githubSourceEnv === input.env
+      ? vaultNames
+      : new Set(
+          (await input.client.listSecretMeta(input.project, githubSourceEnv)).secrets.map(
+            (secret) => secret.name,
+          ),
+        );
+  const vaultMissing = [
+    ...new Set([
+      ...missingNames(required, [...vaultNames]),
+      ...missingNames(github?.secrets ?? [], [...githubSourceNames]),
+    ]),
+  ];
 
   let cloudflareMissing: string[] | "skipped" = "skipped";
   const cfToken = cloudflareTokenFromEnv(processEnv);
@@ -80,7 +86,6 @@ export async function collectStatus(input: {
 
   let githubMissing: string[] | "skipped" = "skipped";
   const ghToken = githubTokenFromEnv(processEnv);
-  const github = input.repo.vault.github;
   if (ghToken != null && github != null) {
     const present = await listGithubSecretNames(
       { repo: github.repo, token: ghToken },

@@ -1,10 +1,11 @@
-# BWF vault replacement candidate
+# BWF vault
 
-`poc/vault` is an isolated Cloudflare Worker + D1 credential plane. It is ready
-for evaluation and shadow use, but it is **not** Build With Friends' current
-credential authority. Infisical remains the only authoring location and every
-existing runtime, deploy, and CI consumer remains on Infisical until a separate
-cutover is approved.
+`poc/vault` is Build With Friends' credential plane: an isolated Cloudflare
+Worker + D1 that has been the authoring authority for every secret in this
+project since the 2026-09-01 cutover from Infisical. It lives under `poc/`
+pending extraction, but it is production infrastructure, not an experiment.
+The repo-root `vault.json` still names the project `bwf-shadow` — import-era
+storage identity that renaming would strand, not a statement of authority.
 
 **The full documentation is at <https://vault.buildwithfriends.dev>** — concepts,
 the complete CLI and HTTP references, the database schema, and the operational
@@ -41,9 +42,8 @@ BWF_VAULT_INSTALL_DIR=/chosen/bin bun run install:vault-cli
 
 The installer records the binary digest beside the command. Upgrades and
 uninstallations refuse to replace an unrelated or locally modified `vault`
-executable. It never edits a shell profile, copies credentials, or changes the
-Vault/Infisical authority boundary. If `~/.local/bin` is not on PATH, add this
-to the relevant shell profile:
+executable. It never edits a shell profile or copies credentials. If
+`~/.local/bin` is not on PATH, add this to the relevant shell profile:
 
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
@@ -96,35 +96,18 @@ vault run -- bun scripts/dev-stack.ts --no-electron
 vault proxy -- agent-command
 ```
 
-The repo-level `dev:stack:vault` script is an explicit alternate developer
-path and uses the installed standalone command. In an Infisical shadow project,
-`vault status` verifies the selected runtime environment against
-`secrets.required`; GitHub/CI destination names remain separate because provider
-push is disabled. The existing `dev`, deploy, and CI secret paths still use
-Infisical.
+The repo-level `dev` and `dev:stack` scripts run under `vault run` by default,
+injecting the `dev-worker` environment before the stack starts. `vault status`
+verifies the selected runtime environment against `secrets.required` and the
+GitHub destination names against `vault.json`'s `github.env`; `vault push`
+delivers the runtime names to the Worker and the destination names to GitHub
+Actions when the matching provider tokens are present. Push fails closed
+whenever `vault.json` names anything other than the vault as `authority`.
 
-## Infisical shadow migration
+## Provider verification
 
-Run the one-way importer from the repository root:
-
-```sh
-bun run vault:migrate:shadow
-```
-
-It inventories every Infisical folder under `dev`, `staging`, and `prod` and
-imports each one into a distinct environment in the isolated `bwf-shadow`
-project. `/` maps to `<env>-root`, `/worker` to `<env>-worker`, and `/ci` to
-`<env>-ci`; nested folders continue that suffix. Ambiguous path mappings fail
-closed. Imported values are sealed, stay in memory during transfer, and are
-checked for exact per-folder name and SHA-256 digest parity. The receipt
-contains counts only; it never prints names, values, or digests.
-
-The importer is idempotent and prunes only stale names inside `bwf-shadow`.
-Never edit an imported value in Vault: edit Infisical and rerun the importer.
-`vault push` fails closed for this shadow configuration, so it cannot write the
-replicas to Cloudflare or GitHub and accidentally become a cutover path.
-
-Run the redacted, read-only provider probes after every import:
+Run the redacted, read-only provider probes after authoring or rotating a
+credential:
 
 ```sh
 bun run vault:verify
