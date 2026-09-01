@@ -60,7 +60,7 @@ type AuditRow = {
   created_at: string;
 };
 
-export function nowIso(clock: () => Date = () => new Date()): string {
+function nowIso(clock: () => Date = () => new Date()): string {
   return clock().toISOString();
 }
 
