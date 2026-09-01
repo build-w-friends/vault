@@ -221,4 +221,70 @@ describe("worker api", () => {
     );
     expect(denied.status).toBe(403);
   });
+
+  test("creating a duplicate project is a 409 conflict, not a 500", async () => {
+    const { app, env } = await createTestVault();
+    const key = await bootstrapUser(app, env);
+    const first = await app.request(
+      "/v1/projects",
+      {
+        method: "POST",
+        headers: authHeaders(key, {}),
+        body: JSON.stringify({ name: "demo" }),
+      },
+      env,
+    );
+    expect(first.status).toBe(201);
+
+    const duplicate = await app.request(
+      "/v1/projects",
+      {
+        method: "POST",
+        headers: authHeaders(key, {}),
+        body: JSON.stringify({ name: "Demo" }),
+      },
+      env,
+    );
+    expect(duplicate.status).toBe(409);
+    const conflictBody = (await duplicate.json()) as { error: string };
+    expect(conflictBody).toEqual({ error: 'project "demo" already exists' });
+  });
+
+  test("creating a duplicate environment is a 409 conflict, not a 500", async () => {
+    const { app, env } = await createTestVault();
+    const key = await bootstrapUser(app, env);
+    await app.request(
+      "/v1/projects",
+      {
+        method: "POST",
+        headers: authHeaders(key, {}),
+        body: JSON.stringify({ name: "demo" }),
+      },
+      env,
+    );
+
+    const duplicate = await app.request(
+      "/v1/projects/demo/environments",
+      {
+        method: "POST",
+        headers: authHeaders(key, {}),
+        body: JSON.stringify({ name: "dev" }),
+      },
+      env,
+    );
+    expect(duplicate.status).toBe(409);
+    const conflictBody = (await duplicate.json()) as { error: string };
+    expect(conflictBody).toEqual({ error: 'environment "dev" already exists' });
+
+    const fresh = await app.request(
+      "/v1/projects/demo/environments",
+      {
+        method: "POST",
+        headers: authHeaders(key, {}),
+        body: JSON.stringify({ name: "staging" }),
+      },
+      env,
+    );
+    expect(fresh.status).toBe(201);
+  });
 });

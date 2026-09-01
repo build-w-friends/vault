@@ -68,6 +68,10 @@ function newId(): string {
   return crypto.randomUUID();
 }
 
+function isUniqueConstraintFailure(error: unknown): boolean {
+  return String(error).includes("UNIQUE constraint failed");
+}
+
 export class VaultStore {
   constructor(
     private readonly db: D1Database,
@@ -257,10 +261,17 @@ export class VaultStore {
   async createProject(name: string): Promise<{ id: string; name: string }> {
     const id = newId();
     const normalized = name.toLowerCase();
-    await this.db
-      .prepare("INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)")
-      .bind(id, normalized, nowIso())
-      .run();
+    try {
+      await this.db
+        .prepare("INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)")
+        .bind(id, normalized, nowIso())
+        .run();
+    } catch (error) {
+      if (isUniqueConstraintFailure(error)) {
+        throw new StoreError(409, `project "${normalized}" already exists`);
+      }
+      throw error;
+    }
     const devId = newId();
     const prodId = newId();
     const created = nowIso();
@@ -301,12 +312,20 @@ export class VaultStore {
   }
 
   async createEnvironment(projectId: string, name: string): Promise<void> {
-    await this.db
-      .prepare(
-        "INSERT INTO environments (id, project_id, name, created_at) VALUES (?, ?, ?, ?)",
-      )
-      .bind(newId(), projectId, name.toLowerCase(), nowIso())
-      .run();
+    const normalized = name.toLowerCase();
+    try {
+      await this.db
+        .prepare(
+          "INSERT INTO environments (id, project_id, name, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(newId(), projectId, normalized, nowIso())
+        .run();
+    } catch (error) {
+      if (isUniqueConstraintFailure(error)) {
+        throw new StoreError(409, `environment "${normalized}" already exists`);
+      }
+      throw error;
+    }
   }
 
   async deleteEnvironment(projectId: string, name: string): Promise<boolean> {
