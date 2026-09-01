@@ -14,7 +14,7 @@
  * opens the keyring exactly as a request does, so a misconfigured root fails
  * the cron rather than pruning against the wrong database.
  *
- * @see {@link https://vault.buildwithfriends.com/concepts/architecture/}
+ * @see {@link https://vault.buildwithfriends.dev/concepts/architecture/}
  */
 import { createApp } from "./app.ts";
 import { MasterKeyError } from "./crypto.ts";

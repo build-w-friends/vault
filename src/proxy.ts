@@ -21,7 +21,7 @@
  * whatever the routed API returns is visible to the child; this protects the
  * credential, not the data it unlocks.
  *
- * @see {@link https://vault.buildwithfriends.com/concepts/brokering/}
+ * @see {@link https://vault.buildwithfriends.dev/concepts/brokering/}
  */
 import { generateKeyPairSync } from "node:crypto";
 import {

@@ -9,7 +9,7 @@
  * flags, then environment, then this file. A missing URL or key is an error
  * here rather than a request that fails later with a less useful message.
  *
- * @see {@link https://vault.buildwithfriends.com/start/install/}
+ * @see {@link https://vault.buildwithfriends.dev/start/install/}
  */
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";

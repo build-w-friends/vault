@@ -17,7 +17,7 @@
  * Keep these decisions in this module. A policy check inlined into a route is
  * a rule that the next route silently does not get.
  *
- * @see {@link https://vault.buildwithfriends.com/concepts/keys-and-policy/}
+ * @see {@link https://vault.buildwithfriends.dev/concepts/keys-and-policy/}
  */
 import type { ApiKeyRecord, SecretKind } from "./types.ts";
 

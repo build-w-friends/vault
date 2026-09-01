@@ -10,7 +10,7 @@
  * whose names the vault cannot supply throws before anything is written, so a
  * push is all-or-nothing per destination rather than partially applied.
  *
- * @see {@link https://vault.buildwithfriends.com/operations/infisical-shadow/}
+ * @see {@link https://vault.buildwithfriends.dev/operations/infisical-shadow/}
  */
 import type { VaultClient } from "./client.ts";
 import {

@@ -11,7 +11,7 @@
  * one: `POST /v1/master-keys/prepare` wraps the data key for the slot that is
  * not currently live.
  *
- * @see {@link https://vault.buildwithfriends.com/reference/configuration/}
+ * @see {@link https://vault.buildwithfriends.dev/reference/configuration/}
  */
 import { MasterKeyError } from "./crypto.ts";
 

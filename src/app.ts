@@ -18,7 +18,7 @@
  * Audit rows are appended on the same path as the effect they describe, so a
  * successful mutation cannot leave no trace.
  *
- * @see {@link https://vault.buildwithfriends.com/reference/http-api/}
+ * @see {@link https://vault.buildwithfriends.dev/reference/http-api/}
  */
 import { Hono } from "hono";
 import { z } from "zod";

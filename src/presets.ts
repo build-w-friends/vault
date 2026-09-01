@@ -7,7 +7,7 @@
  * survive alongside the injected credential, and the upstream would see two
  * conflicting values for the same header.
  *
- * @see {@link https://vault.buildwithfriends.com/concepts/brokering/}
+ * @see {@link https://vault.buildwithfriends.dev/concepts/brokering/}
  */
 export type RoutePreset = {
   host: string;

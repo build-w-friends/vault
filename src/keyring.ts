@@ -15,7 +15,7 @@
  * wrap (409), since removing it makes the database unreadable by the running
  * Worker.
  *
- * @see {@link https://vault.buildwithfriends.com/operations/master-key-rotation/}
+ * @see {@link https://vault.buildwithfriends.dev/operations/master-key-rotation/}
  */
 import {
   MasterKeyError,

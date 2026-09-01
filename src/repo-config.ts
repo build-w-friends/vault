@@ -12,7 +12,7 @@
  * `authority` is read here and enforced in `cli.ts`: `infisical-shadow` means
  * Infisical is authoritative and provider push must fail closed.
  *
- * @see {@link https://vault.buildwithfriends.com/reference/configuration/}
+ * @see {@link https://vault.buildwithfriends.dev/reference/configuration/}
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";

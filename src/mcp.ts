@@ -11,7 +11,7 @@
  * same `policy.ts` decisions as the HTTP routes; this is a second transport,
  * not a second authority.
  *
- * @see {@link https://vault.buildwithfriends.com/concepts/brokering/}
+ * @see {@link https://vault.buildwithfriends.dev/concepts/brokering/}
  */
 import type { Context } from "hono";
 

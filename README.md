@@ -6,7 +6,7 @@ credential authority. Infisical remains the only authoring location and every
 existing runtime, deploy, and CI consumer remains on Infisical until a separate
 cutover is approved.
 
-**The full documentation is at <https://vault.buildwithfriends.com>** — concepts,
+**The full documentation is at <https://vault.buildwithfriends.dev>** — concepts,
 the complete CLI and HTTP references, the database schema, and the operational
 runbooks. It is built from [`apps/vault-docs`](../../apps/vault-docs). This file
 stays the operator's entry point with the checkout open; the site is what you

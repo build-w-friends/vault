@@ -15,7 +15,7 @@
  * Infisical authoritative, provider synchronization fails closed. That refusal
  * is what keeps a shadow import from becoming an unapproved cutover.
  *
- * @see {@link https://vault.buildwithfriends.com/reference/cli/}
+ * @see {@link https://vault.buildwithfriends.dev/reference/cli/}
  */
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";

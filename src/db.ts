@@ -14,7 +14,7 @@
  * lets `app.ts` translate a constraint violation into a 404 or 409 without
  * re-deriving the reason.
  *
- * @see {@link https://vault.buildwithfriends.com/reference/database/}
+ * @see {@link https://vault.buildwithfriends.dev/reference/database/}
  */
 import type { VaultCrypto } from "./crypto.ts";
 import type {

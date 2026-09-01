@@ -6,7 +6,7 @@
  * and revocation — it is safe to log, and the full key is never stored at all,
  * only its keyed hash.
  *
- * @see {@link https://vault.buildwithfriends.com/concepts/keys-and-policy/}
+ * @see {@link https://vault.buildwithfriends.dev/concepts/keys-and-policy/}
  */
 import type { KeyType } from "./types.ts";
 

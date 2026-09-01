@@ -10,7 +10,7 @@
  * means adding a member, which makes the audit surface reviewable as a list
  * instead of discoverable by grep.
  *
- * @see {@link https://vault.buildwithfriends.com/concepts/secret-kinds/}
+ * @see {@link https://vault.buildwithfriends.dev/concepts/secret-kinds/}
  */
 export type KeyType = "user" | "system";
 export type Permission = "read" | "readwrite" | "full";

@@ -9,7 +9,7 @@
  * check that did not run has proven nothing, and collapsing the two states is
  * how a green status starts covering a missing secret.
  *
- * @see {@link https://vault.buildwithfriends.com/start/daily-use/}
+ * @see {@link https://vault.buildwithfriends.dev/start/daily-use/}
  */
 import type { VaultClient } from "./client.ts";
 import { cloudflareTokenFromEnv, listCloudflareSecretNames } from "./push-cloudflare.ts";

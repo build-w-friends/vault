@@ -9,7 +9,7 @@
  * string is a second, untested configuration of whatever consumes it, and the
  * failure it produces is a capability that silently does nothing.
  *
- * @see {@link https://vault.buildwithfriends.com/reference/configuration/}
+ * @see {@link https://vault.buildwithfriends.dev/reference/configuration/}
  */
 import { VaultClient } from "./client.ts";
 import { loadRepoContext } from "./repo-config.ts";

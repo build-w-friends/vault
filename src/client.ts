@@ -9,7 +9,7 @@
  * every non-sealed value at once rather than issuing one request per name, so
  * an injected process makes a single round trip.
  *
- * @see {@link https://vault.buildwithfriends.com/reference/http-api/}
+ * @see {@link https://vault.buildwithfriends.dev/reference/http-api/}
  */
 import type {
   ApiKeyMeta,

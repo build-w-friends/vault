@@ -17,7 +17,7 @@
  * deterministic, so `getSecretByName` is an indexed lookup instead of a
  * decrypt-everything scan.
  *
- * @see {@link https://vault.buildwithfriends.com/concepts/encryption/}
+ * @see {@link https://vault.buildwithfriends.dev/concepts/encryption/}
  */
 const IV_LENGTH = 12;
 const MASTER_KEY_BYTES = 32;
