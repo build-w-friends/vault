@@ -180,6 +180,6 @@ describe("poc/analytics", () => {
     const repo = loadRepoContext(analytics);
     const wrangler = resolveWranglerEnvironment(repo, { vaultEnv: "dev" });
     expect(wrangler?.environment).toBe(null);
-    expect(wrangler?.required).toEqual(["CLOUDFLARE_AI_GATEWAY_TOKEN"]);
+    expect(wrangler?.required).toEqual([]);
   });
 });
