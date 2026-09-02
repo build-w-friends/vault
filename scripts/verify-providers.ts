@@ -8,6 +8,7 @@ const PROJECT = "bwf-shadow";
 const CLOUDFLARE_ACCOUNT_ID = "00000000000000000000000000000000";
 const WORKSPACE_BACKUP_BUCKET = "bwf-workspace-backups";
 const REVIEW_INDEX_BUCKET = "bwf-review-indexes";
+const ANALYTICS_ORIGIN = "https://analytics.buildwithfriends.dev";
 
 type SecretMap = ReadonlyMap<string, string>;
 type ProbeStatus = "PASS" | "FAIL" | "SKIP";
@@ -32,8 +33,8 @@ async function main(): Promise<void> {
 
   const results = await Promise.all([
     probe("GitHub App", () => verifyGitHubApp(prodWorker)),
-    probe("Langfuse worker", () => verifyLangfuse(prodWorker)),
-    probe("Braintrust worker", () => verifyBraintrust(prodWorker)),
+    probe("analytics worker token", () => verifyAnalytics(prodWorker)),
+    probe("analytics CI token", () => verifyAnalytics(prodCi)),
     probe("Cloudflare CI token", () => verifyCloudflare(prodCi)),
     probe("workspace backup R2", () =>
       verifyR2(
@@ -115,24 +116,20 @@ async function verifyGitHubApp(secrets: SecretMap): Promise<void> {
   await client.installationUrl("vault-read-only-verification");
 }
 
-async function verifyLangfuse(secrets: SecretMap): Promise<void> {
-  const baseUrl = new URL(required(secrets, "LANGFUSE_BASE_URL"));
-  const auth = btoa(
-    `${required(secrets, "LANGFUSE_PUBLIC_KEY")}:${required(secrets, "LANGFUSE_SECRET_KEY")}`,
-  );
-  const response = await fetch(new URL("/api/public/projects", baseUrl), {
-    headers: { Authorization: `Basic ${auth}` },
-  });
-  if (!response.ok) throw new Error("Langfuse rejected the credential");
-}
-
-async function verifyBraintrust(secrets: SecretMap): Promise<void> {
-  const response = await fetch("https://api.braintrust.dev/v1/project?limit=1", {
+/**
+ * An empty ingest batch is the one write-gated request that writes nothing:
+ * the platform answers 200 with the token and 401 without it.
+ */
+async function verifyAnalytics(secrets: SecretMap): Promise<void> {
+  const response = await fetch(`${ANALYTICS_ORIGIN}/api/ingest`, {
+    method: "POST",
     headers: {
-      Authorization: `Bearer ${required(secrets, "BRAINTRUST_API_KEY")}`,
+      Authorization: `Bearer ${required(secrets, "ANALYTICS_API_TOKEN")}`,
+      "Content-Type": "application/json",
     },
+    body: "{}",
   });
-  if (!response.ok) throw new Error("Braintrust rejected the credential");
+  if (!response.ok) throw new Error("the analytics platform rejected the token");
 }
 
 async function verifyCloudflare(secrets: SecretMap): Promise<void> {

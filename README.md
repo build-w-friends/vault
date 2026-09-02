@@ -116,7 +116,7 @@ bun run vault:canary:sentry
 bun run vault:recovery:rehearse
 ```
 
-This checks the GitHub App, both Langfuse paths, both Braintrust paths, both
+This checks the GitHub App, both analytics platform tokens, both
 Cloudflare tokens, both R2 credential pairs, and the Sentry API credential.
 OAuth and event ingestion use the separate Vault-backed consumer canaries
 above. The OAuth canary boots the exact registered loopback origin, verifies
