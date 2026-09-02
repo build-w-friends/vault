@@ -36,7 +36,7 @@ async function main(): Promise<void> {
     ],
     {
       cwd: projectRoot,
-      env: { ...process.env, BWF_DEV_ALLOW_TEST_AUTH: "true" },
+      env: process.env,
       stdout: "pipe",
       stderr: "pipe",
     },

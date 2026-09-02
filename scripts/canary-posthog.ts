@@ -19,10 +19,9 @@ async function postHogCanary(): Promise<void> {
   const warnings: unknown[] = [];
   const analytics = createProductAnalytics(
     {
+      BWF_ENVIRONMENT: "production",
       POSTHOG_HOST: "https://us.i.posthog.com",
       POSTHOG_PROJECT_TOKEN: required(secrets, "POSTHOG_PROJECT_TOKEN"),
-      PRODUCT_ANALYTICS: "true",
-      PRODUCT_ANALYTICS_ENVIRONMENT: "production",
       PRODUCT_ANALYTICS_PSEUDONYM_KEY: required(
         secrets,
         "PRODUCT_ANALYTICS_PSEUDONYM_KEY",
