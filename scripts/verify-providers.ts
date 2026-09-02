@@ -25,8 +25,7 @@ export function cloudflareVerifyUrl(token: string): string {
 
 async function main(): Promise<void> {
   const client = operatorClient();
-  const [prodRoot, prodWorker, prodCi] = await Promise.all([
-    loadEnvironment(client, "prod-root"),
+  const [prodWorker, prodCi] = await Promise.all([
     loadEnvironment(client, "prod-worker"),
     loadEnvironment(client, "prod-ci"),
   ]);
@@ -34,10 +33,7 @@ async function main(): Promise<void> {
   const results = await Promise.all([
     probe("GitHub App", () => verifyGitHubApp(prodWorker)),
     probe("Langfuse worker", () => verifyLangfuse(prodWorker)),
-    probe("Langfuse root", () => verifyLangfuse(prodRoot)),
     probe("Braintrust worker", () => verifyBraintrust(prodWorker)),
-    probe("Braintrust CI", () => verifyBraintrust(prodCi)),
-    probe("Cloudflare worker token", () => verifyCloudflare(prodWorker)),
     probe("Cloudflare CI token", () => verifyCloudflare(prodCi)),
     probe("workspace backup R2", () =>
       verifyR2(
