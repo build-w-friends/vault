@@ -24,6 +24,7 @@ import {
   parseMasterKey,
 } from "./crypto.ts";
 import type { MasterKeyWrapMeta } from "./types.ts";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 type WrapRow = {
   fingerprint: string;
@@ -33,7 +34,7 @@ type WrapRow = {
 
 export class KeyringError extends Error {
   constructor(
-    readonly status: number,
+    readonly status: ContentfulStatusCode,
     message: string,
   ) {
     super(message);

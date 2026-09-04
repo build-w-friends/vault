@@ -1,3 +1,4 @@
+import * as v from "valibot";
 export type GitHubAuthorizationExpectation = {
   readonly callbackUrl: string;
   readonly clientId: string;
@@ -99,9 +100,17 @@ export function sentryCanaryEventsUrl(input: {
 }
 
 export function d1DatabaseIdFromListOutput(output: string, name: string): string {
-  const databases = JSON.parse(output) as Array<{ name?: unknown; uuid?: unknown }>;
+  const databases = v.parse(
+    v.array(
+      v.looseObject({
+        name: v.optional(v.string()),
+        uuid: v.optional(v.string()),
+      }),
+    ),
+    JSON.parse(output),
+  );
   const match = databases.find((database) => database.name === name)?.uuid;
-  if (typeof match !== "string" || !/^[0-9a-f-]{36}$/iu.test(match)) {
+  if (!v.is(v.string(), match) || !/^[0-9a-f-]{36}$/iu.test(match)) {
     throw new Error("Wrangler did not list the disposable D1 database id");
   }
   return match;

@@ -42,10 +42,11 @@ export async function loadRequiredSecretValues(
   input: InjectInput,
 ): Promise<Record<string, string>> {
   const repo = loadRepoContext(input.cwd);
-  const wrangler = resolveWranglerEnvironment(repo, {
+  const selection: Parameters<typeof resolveWranglerEnvironment>[1] = {
     vaultEnv: input.env,
-    ...(input.wranglerEnv != null ? { wranglerEnv: input.wranglerEnv } : {}),
-  });
+  };
+  if (input.wranglerEnv != null) selection.wranglerEnv = input.wranglerEnv;
+  const wrangler = resolveWranglerEnvironment(repo, selection);
   const required = wrangler?.required ?? [];
   if (required.length === 0) {
     throw new InjectError(

@@ -7,12 +7,15 @@ import {
   diagnosticIdFromProofOutput,
   sentryCanaryEventsUrl,
 } from "../src/operational-proofs.ts";
+import * as v from "valibot";
 
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 const project = "bwf-shadow";
 
 async function main(argv: readonly string[]): Promise<void> {
   const secrets = await loadEnvironment("prod-ci");
+  // SAFETY: apps/desktop/package.json is a repository-owned package manifest
+  // whose required version field is consumed by the release tooling.
   const version = (
     JSON.parse(await Bun.file(join(projectRoot, "apps/desktop/package.json")).text()) as {
       version: string;
@@ -84,12 +87,25 @@ async function waitForSentry(input: {
       const detail = (await response.text()).slice(0, 500);
       throw new Error(`Sentry event query failed (${response.status}): ${detail}`);
     }
-    const body = (await response.json()) as {
-      data?: Array<Record<string, unknown>>;
-    };
-    const row = body.data?.find((candidate) => candidate.release === input.release);
+    const parsed = v.safeParse(
+      v.looseObject({
+        data: v.optional(v.array(v.unknown())),
+      }),
+      await response.json(),
+    );
+    const row = parsed.success
+      ? parsed.output.data?.find((candidate) => {
+          const release = v.safeParse(v.looseObject({ release: v.string() }), candidate);
+          return release.success && release.output.release === input.release;
+        })
+      : undefined;
     if (row !== undefined) {
-      if (typeof row.title !== "string" || !row.title.includes("ELECTRON_PROCESS_GONE")) {
+      const title = v.safeParse(v.looseObject({ title: v.unknown() }), row);
+      if (
+        !title.success ||
+        !v.is(v.string(), title.output.title) ||
+        !title.output.title.includes("ELECTRON_PROCESS_GONE")
+      ) {
         throw new Error("Sentry returned the canary with the wrong diagnostic code");
       }
       return;
@@ -129,8 +145,8 @@ async function command(
 }
 
 if (import.meta.main) {
-  void main(process.argv.slice(2)).catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : "Sentry acceptance failed");
+  void main(process.argv.slice(2)).catch((cause: unknown) => {
+    console.error(cause instanceof Error ? cause.message : "Sentry acceptance failed");
     process.exit(1);
   });
 }

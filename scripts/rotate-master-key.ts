@@ -10,25 +10,28 @@ import {
   masterKeyFingerprint,
   parseMasterKey,
 } from "../src/crypto.ts";
-import { parseJsonc } from "../src/jsonc.ts";
+import { stripJsonComments } from "../src/jsonc.ts";
 import { secretsStoreSecretId } from "../src/operational-proofs.ts";
+import * as v from "valibot";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-type Slot = "primary" | "secondary";
-
-type Configuration = {
-  readonly env: {
-    readonly production: {
-      readonly vars: { readonly ACTIVE_MASTER_KEY: Slot };
-      readonly secrets_store_secrets: readonly {
-        readonly binding: string;
-        readonly secret_name: string;
-        readonly store_id: string;
-      }[];
-    };
-  };
-};
+const slotSchema = v.picklist(["primary", "secondary"]);
+type Slot = v.InferOutput<typeof slotSchema>;
+const configurationSchema = v.looseObject({
+  env: v.looseObject({
+    production: v.looseObject({
+      vars: v.looseObject({ ACTIVE_MASTER_KEY: slotSchema }),
+      secrets_store_secrets: v.array(
+        v.looseObject({
+          binding: v.string(),
+          secret_name: v.string(),
+          store_id: v.string(),
+        }),
+      ),
+    }),
+  }),
+});
 
 async function main(argv: readonly string[]): Promise<void> {
   if (argv.length !== 2 || argv[0] !== "prepare" || argv[1] !== "--yes") {
@@ -102,17 +105,21 @@ async function prepareExpectedRoot(
   throw new Error("Secrets Store did not propagate the expected root within one minute");
 }
 
-function parseConfiguration(): Configuration {
-  const value = parseJsonc(readFileSync(join(packageRoot, "wrangler.jsonc"), "utf8"));
-  if (typeof value !== "object" || value === null) {
+function parseConfiguration(): v.InferOutput<typeof configurationSchema> {
+  const value = JSON.parse(
+    stripJsonComments(readFileSync(join(packageRoot, "wrangler.jsonc"), "utf8")),
+  );
+  const parsed = v.safeParse(configurationSchema, value);
+  if (!parsed.success) {
+    const invalidSlot = parsed.issues.some((issue) =>
+      issue.path?.some((segment) => segment.key === "ACTIVE_MASTER_KEY"),
+    );
+    if (invalidSlot) {
+      throw new Error("production ACTIVE_MASTER_KEY is invalid");
+    }
     throw new Error("vault Wrangler configuration is invalid");
   }
-  const configuration = value as Configuration;
-  const slot = configuration.env.production.vars.ACTIVE_MASTER_KEY;
-  if (slot !== "primary" && slot !== "secondary") {
-    throw new Error("production ACTIVE_MASTER_KEY is invalid");
-  }
-  return configuration;
+  return parsed.output;
 }
 
 function operatorClient(): VaultClient {
@@ -175,9 +182,9 @@ async function command(argv: readonly string[]): Promise<string> {
 }
 
 if (import.meta.main) {
-  void main(process.argv.slice(2)).catch((error: unknown) => {
+  void main(process.argv.slice(2)).catch((cause: unknown) => {
     console.error(
-      error instanceof Error ? error.message : "master-key preparation failed",
+      cause instanceof Error ? cause.message : "master-key preparation failed",
     );
     process.exit(1);
   });

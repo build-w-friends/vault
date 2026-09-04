@@ -14,14 +14,16 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import * as v from "valibot";
 
-export type VaultConfig = {
-  apiUrl?: string;
-  apiKey?: string;
-  project?: string;
-  env?: string;
-  githubRepo?: string;
-};
+const vaultConfigSchema = v.looseObject({
+  apiUrl: v.optional(v.string()),
+  apiKey: v.optional(v.string()),
+  project: v.optional(v.string()),
+  env: v.optional(v.string()),
+  githubRepo: v.optional(v.string()),
+});
+export type VaultConfig = v.InferOutput<typeof vaultConfigSchema>;
 
 function configPath(): string {
   return join(homedir(), ".config", "poc-vault", "config.json");
@@ -29,7 +31,17 @@ function configPath(): string {
 
 export function readConfig(): VaultConfig {
   try {
-    return JSON.parse(readFileSync(configPath(), "utf8")) as VaultConfig;
+    return readConfigAt(configPath());
+  } catch {
+    return {};
+  }
+}
+
+/** Read a config file, treating absent or malformed operator state as empty. */
+export function readConfigAt(path: string): VaultConfig {
+  try {
+    const parsed = v.safeParse(vaultConfigSchema, JSON.parse(readFileSync(path, "utf8")));
+    return parsed.success ? parsed.output : {};
   } catch {
     return {};
   }
@@ -47,13 +59,15 @@ export function writeConfigAt(path: string, config: VaultConfig): void {
   chmodSync(path, 0o600);
 }
 
-export function resolveClientOptions(flags: VaultConfig): {
+type ResolveClientOptionsResult = {
   apiUrl: string;
   apiKey: string;
   project?: string;
   env?: string;
   githubRepo?: string;
-} {
+};
+
+export function resolveClientOptions(flags: VaultConfig): ResolveClientOptionsResult {
   const stored = readConfig();
   const apiUrl = flags.apiUrl ?? process.env.VAULT_API_URL ?? stored.apiUrl;
   const apiKey = flags.apiKey ?? process.env.VAULT_API_KEY ?? stored.apiKey;
@@ -63,11 +77,12 @@ export function resolveClientOptions(flags: VaultConfig): {
     throw new Error("missing API key (login or --api-key)");
   const project = flags.project ?? process.env.VAULT_PROJECT ?? stored.project;
   const env = flags.env ?? process.env.VAULT_ENV ?? stored.env;
-  return {
+  const result: ResolveClientOptionsResult = {
     apiUrl,
     apiKey,
-    ...(project != null ? { project } : {}),
-    ...(env != null ? { env } : {}),
-    ...(stored.githubRepo != null ? { githubRepo: stored.githubRepo } : {}),
   };
+  if (project != null) result.project = project;
+  if (env != null) result.env = env;
+  if (stored.githubRepo != null) result.githubRepo = stored.githubRepo;
+  return result;
 }

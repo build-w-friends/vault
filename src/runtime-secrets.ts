@@ -14,17 +14,17 @@
  * @see {@link https://vault.buildwithfriends.dev/reference/configuration/}
  */
 import { MasterKeyError } from "./crypto.ts";
+import * as v from "valibot";
 
 export async function readRuntimeSecret(
   binding: SecretsStoreSecret | string | undefined,
   name: string,
 ): Promise<string> {
-  const value =
-    typeof binding === "string"
-      ? binding
-      : binding == null
-        ? undefined
-        : await binding.get();
+  const value = v.is(v.string(), binding)
+    ? binding
+    : binding == null
+      ? undefined
+      : await binding.get();
   if (value == null || value.length === 0) {
     throw new MasterKeyError(`${name} is required`);
   }

@@ -53,13 +53,14 @@ export async function bootstrapUser(
     env,
   );
   if (!response.ok) throw new Error(`bootstrap failed: ${await response.text()}`);
+  // SAFETY: the app's successful /v1/bootstrap response always contains its
+  // generated API key under the string-valued key field.
   const body = (await response.json()) as { key: string };
   return body.key;
 }
 
-export function authHeaders(key: string, body?: unknown): Record<string, string> {
-  return {
-    Authorization: `Bearer ${key}`,
-    ...(body != null ? { "content-type": "application/json" } : {}),
-  };
+export function authHeaders(key: string, contentType?: "application/json") {
+  const headers = new Headers({ Authorization: `Bearer ${key}` });
+  if (contentType !== undefined) headers.set("content-type", contentType);
+  return headers;
 }

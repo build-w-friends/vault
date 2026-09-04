@@ -11,15 +11,21 @@
  *
  * @see {@link https://vault.buildwithfriends.dev/reference/http-api/}
  */
-import type {
-  ApiKeyMeta,
-  AuditRecord,
-  RouteRecord,
-  Scope,
-  SecretKind,
-  SecretMeta,
-  SecretRecord,
-} from "./types.ts";
+import * as v from "valibot";
+import {
+  apiKeyMetaSchema,
+  auditRecordSchema,
+  masterKeyWrapMetaSchema,
+  routeInputSchema,
+  routeRecordSchema,
+  secretMetaSchema,
+  secretRecordSchema,
+} from "./client-schemas.ts";
+import type { Scope, SecretKind } from "./types.ts";
+
+const keyResponseSchema = v.looseObject({ key: v.string(), prefix: v.string() });
+const okResponseSchema = v.looseObject({ ok: v.literal(true) });
+const errorResponseSchema = v.object({ error: v.string() });
 
 class VaultClientError extends Error {
   readonly status: number;
@@ -56,110 +62,139 @@ export class VaultClient {
     this.apiKey = apiKey;
   }
 
-  private async request<T>(
+  private async request<TSchema extends v.GenericSchema>(
     method: string,
     path: string,
-    body?: unknown,
+    schema: TSchema,
+    body?: string,
     auth = true,
     extraHeaders?: Record<string, string>,
-  ): Promise<T> {
+  ): Promise<v.InferOutput<TSchema>> {
+    const headers: Record<string, string> = {};
+    if (auth) headers.Authorization = `Bearer ${this.apiKey}`;
+    if (body != null) headers["content-type"] = "application/json";
     const response = await fetch(new URL(path, this.origin), {
       method,
-      headers: {
-        ...(auth ? { Authorization: `Bearer ${this.apiKey}` } : {}),
-        ...(body != null ? { "content-type": "application/json" } : {}),
-        ...extraHeaders,
-      },
-      body: body != null ? JSON.stringify(body) : undefined,
+      headers: { ...headers, ...extraHeaders },
+      body,
       redirect: "error",
     });
     const text = await response.text();
     const parsed: unknown = text.length > 0 ? JSON.parse(text) : {};
     if (!response.ok) {
-      const message =
-        typeof parsed === "object" &&
-        parsed != null &&
-        "error" in parsed &&
-        typeof parsed.error === "string"
-          ? parsed.error
-          : `request failed: ${response.status}`;
-      throw new VaultClientError(response.status, message);
+      const error = v.safeParse(errorResponseSchema, parsed);
+      throw new VaultClientError(
+        response.status,
+        error.success ? error.output.error : `request failed: ${response.status}`,
+      );
     }
-    return parsed as T;
+    const result = v.safeParse(schema, parsed);
+    if (!result.success) {
+      throw new VaultClientError(
+        response.status,
+        "vault API returned an invalid response",
+      );
+    }
+    return result.output;
   }
 
   bootstrap(bootstrapToken: string, label?: string) {
-    return this.request<{ key: string; prefix: string }>(
+    return this.request(
       "POST",
       "/v1/bootstrap",
-      { label },
+      keyResponseSchema,
+      JSON.stringify({ label }),
       false,
       { "X-Vault-Bootstrap-Token": bootstrapToken },
     );
   }
 
   listProjects() {
-    return this.request<{ projects: string[] }>("GET", "/v1/projects");
+    return this.request(
+      "GET",
+      "/v1/projects",
+      v.looseObject({ projects: v.array(v.string()) }),
+    );
   }
 
   createProject(name: string) {
-    return this.request<{ id: string; name: string }>("POST", "/v1/projects", { name });
+    return this.request(
+      "POST",
+      "/v1/projects",
+      v.looseObject({ id: v.string(), name: v.string() }),
+      JSON.stringify({ name }),
+    );
   }
 
   deleteProject(name: string) {
-    return this.request<{ ok: true }>(
+    return this.request(
       "DELETE",
       `/v1/projects/${encodeURIComponent(name)}`,
+      okResponseSchema,
     );
   }
 
   listEnvironments(project: string) {
-    return this.request<{ environments: string[] }>(
+    return this.request(
       "GET",
       `/v1/projects/${encodeURIComponent(project)}/environments`,
+      v.looseObject({ environments: v.array(v.string()) }),
     );
   }
 
   createEnvironment(project: string, name: string) {
-    return this.request<{ name: string }>(
+    return this.request(
       "POST",
       `/v1/projects/${encodeURIComponent(project)}/environments`,
-      { name },
+      v.looseObject({ name: v.string() }),
+      JSON.stringify({ name }),
     );
   }
 
   deleteEnvironment(project: string, env: string) {
-    return this.request<{ ok: true }>(
+    return this.request(
       "DELETE",
       `/v1/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(env)}`,
+      okResponseSchema,
     );
   }
 
   listSecretMeta(project: string, env: string) {
-    return this.request<{ secrets: SecretMeta[] }>(
+    return this.request(
       "GET",
       `/v1/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(env)}/secrets`,
+      v.looseObject({ secrets: v.array(secretMetaSchema) }),
     );
   }
 
   listSecrets(project: string, env: string) {
-    return this.request<{ secrets: Array<SecretRecord & { value?: string }> }>(
+    return this.request(
       "GET",
       `/v1/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(env)}/secrets?show=1`,
+      v.looseObject({
+        secrets: v.array(
+          v.looseObject({
+            ...secretMetaSchema.entries,
+            value: v.exactOptional(v.string()),
+          }),
+        ),
+      }),
     );
   }
 
   exportSecrets(project: string, env: string) {
-    return this.request<{ secrets: Array<SecretRecord & { value?: string }> }>(
+    return this.request(
       "GET",
       `/v1/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(env)}/secrets?export=1`,
+      v.looseObject({ secrets: v.array(secretRecordSchema) }),
     );
   }
 
   getSecret(project: string, env: string, name: string) {
-    return this.request<SecretRecord>(
+    return this.request(
       "GET",
       `/v1/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(env)}/secrets/${encodeURIComponent(name)}`,
+      secretRecordSchema,
     );
   }
 
@@ -171,25 +206,28 @@ export class VaultClient {
       delete?: string[];
     },
   ) {
-    return this.request<{ ok: true }>(
+    return this.request(
       "PATCH",
       `/v1/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(env)}/secrets`,
-      body,
+      okResponseSchema,
+      JSON.stringify(body),
     );
   }
 
   listRoutes(project: string, env: string) {
-    return this.request<{ routes: RouteRecord[] }>(
+    return this.request(
       "GET",
       `/v1/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(env)}/routes`,
+      v.looseObject({ routes: v.array(routeRecordSchema) }),
     );
   }
 
-  putRoute(project: string, env: string, body: Record<string, unknown>) {
-    return this.request<{ ok: true; host: string }>(
+  putRoute(project: string, env: string, body: v.InferInput<typeof routeInputSchema>) {
+    return this.request(
       "PUT",
       `/v1/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(env)}/routes`,
-      body,
+      v.looseObject({ ok: v.literal(true), host: v.string() }),
+      JSON.stringify(body),
     );
   }
 
@@ -201,52 +239,72 @@ export class VaultClient {
     scopes?: Scope[];
     expiresInDays?: number;
   }) {
-    return this.request<{ key: string; prefix: string }>("POST", "/v1/keys", body);
+    return this.request("POST", "/v1/keys", keyResponseSchema, JSON.stringify(body));
   }
 
   listKeys(includeRevoked = false) {
-    return this.request<{ keys: ApiKeyMeta[] }>(
+    return this.request(
       "GET",
       `/v1/keys${includeRevoked ? "?includeRevoked=1" : ""}`,
+      v.looseObject({ keys: v.array(apiKeyMetaSchema) }),
     );
   }
 
   rotateKey(prefix: string, expiresInDays?: number) {
-    return this.request<{ key: string; prefix: string }>(
+    return this.request(
       "POST",
       `/v1/keys/${encodeURIComponent(prefix)}/rotate`,
-      expiresInDays == null ? {} : { expiresInDays },
+      keyResponseSchema,
+      JSON.stringify(expiresInDays == null ? {} : { expiresInDays }),
     );
   }
 
   revokeKey(prefix: string) {
-    return this.request<{ ok: true }>("DELETE", `/v1/keys/${encodeURIComponent(prefix)}`);
+    return this.request(
+      "DELETE",
+      `/v1/keys/${encodeURIComponent(prefix)}`,
+      okResponseSchema,
+    );
   }
 
   listAudit(limit = 50, cursor?: string) {
     const query = new URLSearchParams({ limit: String(limit) });
     if (cursor != null) query.set("cursor", cursor);
-    return this.request<{ events: AuditRecord[]; nextCursor: string | null }>(
+    return this.request(
       "GET",
       `/v1/audit?${query.toString()}`,
+      v.looseObject({
+        events: v.array(auditRecordSchema),
+        nextCursor: v.nullable(v.string()),
+      }),
     );
   }
 
   listMasterKeys() {
-    return this.request<{
-      activeFingerprint: string;
-      wraps: Array<{ fingerprint: string; createdAt: string }>;
-    }>("GET", "/v1/master-keys");
+    return this.request(
+      "GET",
+      "/v1/master-keys",
+      v.looseObject({
+        activeFingerprint: v.string(),
+        wraps: v.array(masterKeyWrapMetaSchema),
+      }),
+    );
   }
 
   prepareMasterKey() {
-    return this.request<{ fingerprint: string }>("POST", "/v1/master-keys/prepare", {});
+    return this.request(
+      "POST",
+      "/v1/master-keys/prepare",
+      v.looseObject({ fingerprint: v.string() }),
+      JSON.stringify({}),
+    );
   }
 
   retireMasterKey(fingerprint: string) {
-    return this.request<{ ok: true }>(
+    return this.request(
       "DELETE",
       `/v1/master-keys/${encodeURIComponent(fingerprint)}`,
+      okResponseSchema,
     );
   }
 }

@@ -19,13 +19,67 @@ import { StoreError, VaultStore } from "./db.ts";
 import { randomSecretValue } from "./keys.ts";
 import { PolicyError, assertCanWrite, assertScope } from "./policy.ts";
 import type { ApiKeyRecord } from "./types.ts";
+import * as v from "valibot";
 
-type Rpc = {
-  jsonrpc: "2.0";
-  id?: string | number | null;
-  method?: string;
-  params?: Record<string, unknown>;
-};
+const rpcRequestSchema = v.object({
+  jsonrpc: v.literal("2.0"),
+  id: v.optional(v.union([v.string(), v.number(), v.null()])),
+  method: v.string(),
+  params: v.optional(
+    v.pipe(
+      v.unknown(),
+      v.check(
+        (value) => value !== null && !Array.isArray(value),
+        "params must be an object",
+      ),
+      v.looseObject({
+        name: v.optional(v.unknown()),
+        arguments: v.optional(v.unknown()),
+      }),
+    ),
+  ),
+});
+const toolCallParamsSchema = v.object({
+  name: v.string(),
+  arguments: v.optional(
+    v.pipe(
+      v.unknown(),
+      v.check((value) => !Array.isArray(value), "arguments must be an object"),
+      v.looseObject({}),
+    ),
+  ),
+});
+const projectEnvironmentArgsSchema = v.object({
+  project: v.string(),
+  env: v.string(),
+});
+const createSealedArgsSchema = v.object({
+  project: v.string(),
+  env: v.string(),
+  name: v.string(),
+});
+
+type RpcId = string | number | null;
+type ToolArgs = { project: string; env: string; name?: string };
+type McpContent = { type: "text"; text: string };
+type McpResult =
+  | {
+      protocolVersion: string;
+      capabilities: { tools: Record<string, never> };
+      serverInfo: { name: string; version: string };
+    }
+  | {
+      tools: Array<{
+        name: string;
+        description: string;
+        inputSchema: {
+          type: "object";
+          properties: Record<string, { type: string }>;
+          required?: string[];
+        };
+      }>;
+    }
+  | { content: McpContent[] };
 
 export async function handleMcp(
   c: Context<{
@@ -35,10 +89,29 @@ export async function handleMcp(
 ): Promise<Response> {
   const key = c.get("key");
   const store = c.get("store");
-  const rpc = (await c.req.json()) as Rpc;
-  const id = rpc.id ?? null;
+  let input: unknown;
+  try {
+    input = await c.req.json();
+  } catch {
+    return c.json({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32700, message: "parse error" },
+    });
+  }
+  const parsed = v.safeParse(rpcRequestSchema, input);
+  if (!parsed.success) {
+    return c.json({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: "invalid request" },
+    });
+  }
+  const rpc = parsed.output;
+  const id: RpcId = rpc.id ?? null;
 
-  const result = async (value: unknown) => c.json({ jsonrpc: "2.0", id, result: value });
+  const result = async (value: McpResult) =>
+    c.json({ jsonrpc: "2.0", id, result: value });
   const error = (code: number, message: string) =>
     c.json({ jsonrpc: "2.0", id, error: { code, message } });
 
@@ -98,9 +171,10 @@ export async function handleMcp(
   if (rpc.method !== "tools/call") {
     return error(-32601, `unknown method ${rpc.method ?? ""}`);
   }
-  const rawName = rpc.params?.name;
-  const name = typeof rawName === "string" ? rawName : "";
-  const args = (rpc.params?.arguments ?? {}) as Record<string, string>;
+  const callParams = v.safeParse(toolCallParamsSchema, rpc.params);
+  if (!callParams.success) return error(-32602, "invalid params");
+  const name = callParams.output.name ?? "";
+  const rawArgs = callParams.output.arguments ?? {};
   try {
     if (name === "mint_proxy_help") {
       return result({
@@ -112,11 +186,17 @@ export async function handleMcp(
         ],
       });
     }
-    if (args.project == null || args.env == null) {
-      throw new PolicyError(400, "project and env are required");
-    }
-    assertScope(key, args.project, args.env);
-    const { environmentId } = await store.requireEnvironment(args.project, args.env);
+    const args =
+      name === "create_sealed"
+        ? v.safeParse(createSealedArgsSchema, rawArgs)
+        : v.safeParse(projectEnvironmentArgsSchema, rawArgs);
+    if (!args.success) return error(-32602, "invalid params");
+    const normalizedArgs: ToolArgs = args.output;
+    assertScope(key, normalizedArgs.project, normalizedArgs.env);
+    const { environmentId } = await store.requireEnvironment(
+      normalizedArgs.project,
+      normalizedArgs.env,
+    );
     if (name === "list_secrets") {
       const secrets = await store.listSecretMeta(environmentId);
       await store.audit({ keyPrefix: key.keyPrefix, action: "list", status: "ok" });
@@ -141,17 +221,18 @@ export async function handleMcp(
       });
     }
     if (name === "create_sealed") {
-      if (args.name == null) throw new PolicyError(400, "name is required");
+      const secretName = normalizedArgs.name;
+      if (secretName == null) return error(-32602, "invalid params");
       assertCanWrite(key);
-      await store.setSecret(environmentId, args.name, randomSecretValue(), "sealed");
+      await store.setSecret(environmentId, secretName, randomSecretValue(), "sealed");
       await store.audit({
         keyPrefix: key.keyPrefix,
         action: "set",
         status: "ok",
-        secretName: args.name,
+        secretName,
       });
       return result({
-        content: [{ type: "text", text: `created sealed secret ${args.name}` }],
+        content: [{ type: "text", text: `created sealed secret ${secretName}` }],
       });
     }
     if (name === "get_secret") {

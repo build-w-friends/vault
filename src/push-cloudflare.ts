@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 export type CloudflarePushTarget = {
@@ -6,9 +8,37 @@ export type CloudflarePushTarget = {
   token: string;
 };
 
-export function cloudflareBulkBody(values: Record<string, string>): {
+type CloudflareBulkBodyResult = {
   secrets: Record<string, { type: "secret_text"; name: string; text: string }>;
-} {
+};
+
+const cloudflareSecretEntryParser = z.union([
+  z.string(),
+  z.preprocess(
+    (value) => (Array.isArray(value) ? Object.create(value) : value),
+    z.object({ name: z.string() }).transform((entry) => entry.name),
+  ),
+]);
+const cloudflareListingParser = z.preprocess(
+  (value) => (Array.isArray(value) ? Object.create(value) : value),
+  z.looseObject({
+    result: z.union([
+      z.array(cloudflareSecretEntryParser),
+      z.looseObject({ secrets: z.array(cloudflareSecretEntryParser) }),
+    ]),
+  }),
+);
+const cloudflareListingNamesParser = cloudflareListingParser
+  .transform((listing) => {
+    const rows = Array.isArray(listing.result) ? listing.result : listing.result.secrets;
+    return rows;
+  })
+  .nullable()
+  .catch(null);
+
+export function cloudflareBulkBody(
+  values: Record<string, string>,
+): CloudflareBulkBodyResult {
   const secrets: Record<string, { type: "secret_text"; name: string; text: string }> = {};
   for (const [name, text] of Object.entries(values)) {
     secrets[name] = { type: "secret_text", name, text };
@@ -16,28 +46,9 @@ export function cloudflareBulkBody(values: Record<string, string>): {
   return { secrets };
 }
 
-export function namesFromCloudflareListing(listing: unknown): string[] | null {
-  if (typeof listing !== "object" || listing == null) return null;
-  const result = (listing as { result?: unknown }).result;
-  const rows = Array.isArray(result)
-    ? result
-    : typeof result === "object" && result != null && "secrets" in result
-      ? (result as { secrets?: unknown }).secrets
-      : null;
-  if (!Array.isArray(rows)) return null;
-  const names: string[] = [];
-  for (const entry of rows) {
-    if (typeof entry === "string") names.push(entry);
-    else if (
-      typeof entry === "object" &&
-      entry != null &&
-      typeof (entry as { name?: unknown }).name === "string"
-    ) {
-      names.push((entry as { name: string }).name);
-    } else return null;
-  }
-  return names;
-}
+export const namesFromCloudflareListing = cloudflareListingNamesParser.parse.bind(
+  cloudflareListingNamesParser,
+);
 
 export async function listCloudflareSecretNames(
   target: CloudflarePushTarget,

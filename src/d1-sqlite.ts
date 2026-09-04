@@ -1,10 +1,15 @@
 import { Database, type SQLQueryBindings } from "bun:sqlite";
 
+type SqliteColumnValue = string | number | Uint8Array | null;
+type SqliteRow = Record<string, SqliteColumnValue>;
+
 function bindings(values: unknown[]): SQLQueryBindings[] {
+  // SAFETY: this private adapter is called only by VaultStore and VaultKeyring;
+  // their bind sites pass strings, numbers, or null, all valid SQLite bindings.
   return values as SQLQueryBindings[];
 }
 
-function emptyMeta(overrides: Partial<D1Meta> = {}): D1Meta & Record<string, unknown> {
+function emptyMeta(overrides: Partial<D1Meta> = {}) {
   return {
     duration: 0,
     size_after: 0,
@@ -29,20 +34,20 @@ class SqlitePreparedStatement implements D1PreparedStatement {
   }
 
   async first<T = unknown>(colName?: string): Promise<T | null> {
-    const row = this.db.query(this.query).get(...bindings(this.values)) as Record<
-      string,
-      unknown
-    > | null;
-    if (row == null) return null;
-    if (colName != null) return (row[colName] as T) ?? null;
-    return row as T;
+    if (colName != null) {
+      const row = this.db
+        .query<Record<string, T>, SQLQueryBindings[]>(this.query)
+        .get(...bindings(this.values));
+      return row?.[colName] ?? null;
+    }
+    return this.db.query<T, SQLQueryBindings[]>(this.query).get(...bindings(this.values));
   }
 
-  async run<T = Record<string, unknown>>(): Promise<D1Result<T>> {
+  async run<T = SqliteRow>(): Promise<D1Result<T>> {
     return this.runSync<T>();
   }
 
-  runSync<T = Record<string, unknown>>(): D1Result<T> {
+  runSync<T = SqliteRow>(): D1Result<T> {
     const result = this.db.query(this.query).run(...bindings(this.values));
     return {
       success: true,
@@ -56,8 +61,10 @@ class SqlitePreparedStatement implements D1PreparedStatement {
     };
   }
 
-  async all<T = Record<string, unknown>>(): Promise<D1Result<T>> {
-    const results = this.db.query(this.query).all(...bindings(this.values)) as T[];
+  async all<T = SqliteRow>(): Promise<D1Result<T>> {
+    const results = this.db
+      .query<T, SQLQueryBindings[]>(this.query)
+      .all(...bindings(this.values));
     return {
       success: true,
       meta: emptyMeta({ rows_read: results.length }),
@@ -70,15 +77,18 @@ class SqlitePreparedStatement implements D1PreparedStatement {
   async raw<T = unknown[]>(options?: {
     columnNames?: boolean;
   }): Promise<T[] | [string[], ...T[]]> {
-    const rows = this.db.query(this.query).all(...bindings(this.values)) as Record<
-      string,
-      unknown
-    >[];
+    const rows = this.db
+      .query<SqliteRow, SQLQueryBindings[]>(this.query)
+      .all(...bindings(this.values));
     if (options?.columnNames === true) {
       const names = rows[0] != null ? Object.keys(rows[0]) : [];
+      // SAFETY: callers supply T matching the selected row tuple; Object.values
+      // preserves SQLite's column order for D1.raw's tuple contract.
       const values = rows.map((row) => Object.values(row)) as T[];
       return [names, ...values];
     }
+    // SAFETY: callers supply T matching the selected row tuple; Object.values
+    // preserves SQLite's column order for D1.raw's row-array contract.
     return rows.map((row) => Object.values(row)) as T[];
   }
 }

@@ -10,7 +10,9 @@
  */
 import type { KeyType } from "./types.ts";
 
-export function randomApiKey(type: KeyType): { plaintext: string; prefix: string } {
+type RandomApiKeyResult = { plaintext: string; prefix: string };
+
+export function randomApiKey(type: KeyType): RandomApiKeyResult {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   let hex = "";
   for (const byte of bytes) hex += byte.toString(16).padStart(2, "0");

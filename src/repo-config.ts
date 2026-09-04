@@ -23,31 +23,55 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
-import { parseJsonc } from "./jsonc.ts";
+import { stripJsonComments } from "./jsonc.ts";
+import { z } from "zod";
 
-type GithubDestination = {
-  repo: string;
-  /** Environment the GitHub destination's values are read from. Defaults to
-   * the session environment when absent — the runtime and CI names usually
-   * live in different environments, and this is what lets one `vault.json`
-   * name both sources. */
-  env?: string;
-  secrets: string[];
-};
+const requiredSchema = z
+  .array(z.unknown())
+  .catch([])
+  .transform((values) =>
+    values.filter((value): value is string => z.string().safeParse(value).success),
+  );
+const secretsSchema = z.object({ required: requiredSchema }).catch({ required: [] });
+const objectSchema = z.object({});
+function isEnvironmentContainer(value: unknown): value is object {
+  return Array.isArray(value) || objectSchema.safeParse(value).success;
+}
+const environmentEntriesSchema = z
+  .unknown()
+  .transform((value) => (isEnvironmentContainer(value) ? Object.entries(value) : []))
+  .pipe(z.array(z.tuple([z.string(), z.unknown()])));
+const configSchema = z
+  .object({
+    secrets: secretsSchema.optional(),
+    name: z.string().optional().catch(undefined),
+    account_id: z.string().optional().catch(undefined),
+    env: environmentEntriesSchema.optional().default([]),
+  })
+  .passthrough()
+  .catch({ env: [] });
+const requiredConfigSchema = z
+  .object({ secrets: secretsSchema.optional() })
+  .passthrough()
+  .catch({});
 
-type VaultJson = {
-  project?: string;
-  env?: string;
-  authority?: string;
-  wrangler?: string;
-  /**
-   * Which Wrangler environment each vault environment's contract lives in.
-   * `null` selects the top-level configuration, the way omitting Wrangler's
-   * own `--env` does.
-   */
-  wranglerEnvironments?: Record<string, string | null>;
-  github?: GithubDestination;
-};
+const vaultJsonSchema = z.object({
+  project: z.string().optional(),
+  env: z.string().optional(),
+  authority: z.string().optional(),
+  wrangler: z.string().optional(),
+  // null selects top-level Wrangler configuration; names select env.<name>.
+  wranglerEnvironments: z.record(z.string(), z.string().nullable()).optional(),
+  github: z
+    .object({
+      repo: z.string(),
+      // Absent means the session environment supplies GitHub secrets.
+      env: z.string().optional(),
+      secrets: z.array(z.string()),
+    })
+    .optional(),
+});
+type VaultJson = z.output<typeof vaultJsonSchema>;
 
 /** One Wrangler environment's resolved contract. */
 export type WranglerEnvironmentConfig = {
@@ -96,21 +120,21 @@ function findUp(start: string, names: string[]): string | null {
  * declares none requires none, exactly as it holds none of the top level's
  * `vars`.
  */
-export function readRequiredSecretNames(config: unknown): string[] {
-  if (typeof config !== "object" || config == null) return [];
-  const secrets = (config as { secrets?: { required?: unknown } }).secrets;
-  const required = secrets?.required;
-  if (!Array.isArray(required)) return [];
-  return required.filter((name): name is string => typeof name === "string");
-}
+const requiredNamesSchema = requiredConfigSchema.transform(
+  (config) => config.secrets?.required ?? [],
+);
+export const readRequiredSecretNames =
+  requiredNamesSchema.parse.bind(requiredNamesSchema);
 
 export function loadRepoContext(cwd: string): RepoContext {
   const vaultJsonPath = findUp(cwd, ["vault.json"]);
   const root = vaultJsonPath != null ? dirname(vaultJsonPath) : resolve(cwd);
-  const vault: VaultJson =
-    vaultJsonPath != null
-      ? (parseJsonc(readFileSync(vaultJsonPath, "utf8")) as VaultJson)
-      : {};
+  let vault: VaultJson = {};
+  if (vaultJsonPath != null) {
+    vault = vaultJsonSchema.parse(
+      JSON.parse(stripJsonComments(readFileSync(vaultJsonPath, "utf8"))),
+    );
+  }
   const wranglerPath =
     vault.wrangler != null
       ? isAbsolute(vault.wrangler)
@@ -125,24 +149,34 @@ export function loadRepoContext(cwd: string): RepoContext {
   };
 }
 
-function stringField(config: object, field: string): string | null {
-  const value = (config as Record<string, unknown>)[field];
-  return typeof value === "string" ? value : null;
+function stringField(
+  config: z.output<typeof configSchema>,
+  field: "name" | "account_id",
+): string | null {
+  const value = field === "name" ? config.name : config.account_id;
+  return z.string().nullable().catch(null).parse(value);
 }
 
-export function readWranglerConfig(source: unknown, path: string): WranglerConfig {
-  const config = typeof source === "object" && source != null ? source : {};
-  const topLevel: WranglerEnvironmentConfig = {
-    environment: null,
-    name: stringField(config, "name"),
-    accountId: stringField(config, "account_id"),
-    required: readRequiredSecretNames(config),
-  };
-  const declared = (config as { env?: unknown }).env;
-  const environments: WranglerEnvironmentConfig[] = [];
-  if (typeof declared === "object" && declared != null) {
-    for (const [name, value] of Object.entries(declared)) {
-      const block = typeof value === "object" && value != null ? value : {};
+const wranglerConfigArgumentsSchema = z
+  .tuple([z.unknown(), z.string()])
+  .transform(([source, path]): [z.output<typeof configSchema>, string] => [
+    configSchema.parse(source ?? {}),
+    path,
+  ]);
+
+export const readWranglerConfig = z
+  .function({ input: wranglerConfigArgumentsSchema })
+  .implement((config, path): WranglerConfig => {
+    const topLevel: WranglerEnvironmentConfig = {
+      environment: null,
+      name: stringField(config, "name"),
+      accountId: stringField(config, "account_id"),
+      required: readRequiredSecretNames(config),
+    };
+    const declared = config.env;
+    const environments: WranglerEnvironmentConfig[] = [];
+    for (const [name, value] of declared) {
+      const block = configSchema.parse(value);
       environments.push({
         environment: name,
         // Inheritable, but Wrangler appends the environment name to a Worker
@@ -156,12 +190,14 @@ export function readWranglerConfig(source: unknown, path: string): WranglerConfi
         required: readRequiredSecretNames(block),
       });
     }
-  }
-  return { path, topLevel, environments };
-}
+    return { path, topLevel, environments };
+  });
 
 function readWrangler(path: string): WranglerConfig {
-  return readWranglerConfig(parseJsonc(readFileSync(path, "utf8")), path);
+  return readWranglerConfig(
+    JSON.parse(stripJsonComments(readFileSync(path, "utf8"))),
+    path,
+  );
 }
 
 /**

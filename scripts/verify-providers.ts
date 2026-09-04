@@ -3,6 +3,7 @@ import { AwsClient } from "aws4fetch";
 import { GitHubAppClient } from "../../../apps/worker/src/github/github-app.ts";
 import { VaultClient } from "../src/client.ts";
 import { readConfig } from "../src/config.ts";
+import * as v from "valibot";
 
 const PROJECT = "bwf-shadow";
 const CLOUDFLARE_ACCOUNT_ID = "00000000000000000000000000000000";
@@ -138,11 +139,18 @@ async function verifyCloudflare(secrets: SecretMap): Promise<void> {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) throw new Error("Cloudflare rejected the token");
-  const body = (await response.json()) as {
-    result?: { status?: unknown };
-    success?: unknown;
-  };
-  if (body.success !== true || body.result?.status !== "active") {
+  const parsed = v.safeParse(
+    v.looseObject({
+      result: v.optional(v.looseObject({ status: v.optional(v.string()) })),
+      success: v.optional(v.boolean()),
+    }),
+    await response.json(),
+  );
+  if (
+    !parsed.success ||
+    parsed.output.success !== true ||
+    parsed.output.result?.status !== "active"
+  ) {
     throw new Error("Cloudflare token is not active");
   }
 }
@@ -178,8 +186,11 @@ async function verifySentry(secrets: SecretMap): Promise<void> {
     },
   );
   if (!response.ok) throw new Error("Sentry rejected the credential");
-  const projects = (await response.json()) as Array<{ slug?: unknown }>;
-  if (!projects.some((candidate) => candidate.slug === project)) {
+  const parsed = v.safeParse(
+    v.array(v.looseObject({ slug: v.optional(v.string()) })),
+    await response.json(),
+  );
+  if (!parsed.success || !parsed.output.some((candidate) => candidate.slug === project)) {
     throw new Error("Sentry project is not visible to the credential");
   }
 }

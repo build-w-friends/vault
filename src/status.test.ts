@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import type { VaultClient } from "./client.ts";
+import { VaultClient } from "./client.ts";
 import type { RepoContext, WranglerEnvironmentConfig } from "./repo-config.ts";
 import { collectStatus, formatStatus, missingNames, statusFails } from "./status.ts";
 
@@ -14,17 +14,7 @@ describe("status", () => {
       ["dev-worker", ["WORKER_SECRET"]],
       ["prod-ci", ["CI_SECRET"]],
     ]);
-    const client = {
-      listSecretMeta: (project: string, env: string) => {
-        expect(project).toBe("bwf");
-        return Promise.resolve({
-          secrets: (listings.get(env) ?? []).map((name) => ({
-            name,
-            kind: "secret" as const,
-          })),
-        });
-      },
-    } as unknown as VaultClient;
+    const client = new StubVaultClient(listings);
     const report = await collectStatus({
       client,
       repo: repoContext(["CI_SECRET", "CI_ONLY"]),
@@ -65,6 +55,24 @@ describe("status", () => {
     expect(text).toContain("github: ok");
   });
 });
+
+type SecretMetaResponse = Awaited<ReturnType<VaultClient["listSecretMeta"]>>;
+
+class StubVaultClient extends VaultClient {
+  constructor(private readonly listings: ReadonlyMap<string, readonly string[]>) {
+    super("http://localhost", "test-key");
+  }
+
+  override listSecretMeta(project: string, env: string): Promise<SecretMetaResponse> {
+    expect(project).toBe("bwf");
+    return Promise.resolve({
+      secrets: (this.listings.get(env) ?? []).map((name) => ({
+        name,
+        kind: "secret" as const,
+      })),
+    });
+  }
+}
 
 function repoContext(githubRequired: string[]): RepoContext {
   return {

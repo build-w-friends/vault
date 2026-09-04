@@ -17,25 +17,31 @@ export type RoutePreset = {
   dummyValue: string;
 };
 
-const PRESETS: Record<string, RoutePreset> = {
-  github: {
-    host: "api.github.com",
-    inject: "header:Authorization:Bearer",
-    stripHeaders: ["authorization"],
-    dummyEnvName: "GITHUB_TOKEN",
-    dummyValue: "ghp_dummy_vault_placeholder",
-  },
-  anthropic: {
-    host: "api.anthropic.com",
-    inject: "header:x-api-key",
-    stripHeaders: ["x-api-key"],
-    dummyEnvName: "ANTHROPIC_API_KEY",
-    dummyValue: "__anthropic_api_key__",
-  },
-};
+const PRESETS = new Map<string, RoutePreset>([
+  [
+    "github",
+    {
+      host: "api.github.com",
+      inject: "header:Authorization:Bearer",
+      stripHeaders: ["authorization"],
+      dummyEnvName: "GITHUB_TOKEN",
+      dummyValue: "ghp_dummy_vault_placeholder",
+    },
+  ],
+  [
+    "anthropic",
+    {
+      host: "api.anthropic.com",
+      inject: "header:x-api-key",
+      stripHeaders: ["x-api-key"],
+      dummyEnvName: "ANTHROPIC_API_KEY",
+      dummyValue: "__anthropic_api_key__",
+    },
+  ],
+]);
 
 export function routePreset(name: string): RoutePreset | null {
-  return PRESETS[name] ?? null;
+  return PRESETS.get(name) ?? null;
 }
 
 export function genericRoute(input: {

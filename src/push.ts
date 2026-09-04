@@ -44,7 +44,7 @@ export type PushReport = {
   skipped: string[];
 };
 
-function pick(all: Record<string, string>, names: string[]): Record<string, string> {
+function pick(all: Record<string, string>, names: string[]) {
   const out: Record<string, string> = {};
   for (const name of names) {
     const value = all[name];

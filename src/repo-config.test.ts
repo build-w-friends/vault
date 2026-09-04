@@ -51,6 +51,37 @@ describe("repo config", () => {
       "B",
     ]);
   });
+
+  test("keeps independent fields and environment entries when values are malformed", () => {
+    const config = readWranglerConfig(
+      {
+        name: 42,
+        account_id: "account",
+        secrets: { required: ["TOKEN"] },
+        env: [null, { name: "second" }],
+      },
+      "/repo/wrangler.jsonc",
+    );
+    expect(config.topLevel).toEqual({
+      environment: null,
+      name: null,
+      accountId: "account",
+      required: ["TOKEN"],
+    });
+    expect(config.environments).toEqual([
+      { environment: "0", name: null, accountId: "account", required: [] },
+      { environment: "1", name: "second", accountId: "account", required: [] },
+    ]);
+  });
+
+  test("rejects malformed vault destinations at the configuration boundary", () => {
+    const root = mkdtempSync(join(tmpdir(), "vault-repo-"));
+    writeFileSync(
+      join(root, "vault.json"),
+      JSON.stringify({ github: { repo: "acme/app", secrets: [42] } }),
+    );
+    expect(() => loadRepoContext(root)).toThrow();
+  });
 });
 
 /**
@@ -70,7 +101,10 @@ const environmentScoped = {
   },
 };
 
-function context(vault: RepoContext["vault"], config: unknown = environmentScoped) {
+function context(
+  vault: RepoContext["vault"],
+  config: Parameters<typeof readWranglerConfig>[0] = environmentScoped,
+) {
   return {
     root: "/repo",
     vaultJsonPath: "/repo/vault.json",

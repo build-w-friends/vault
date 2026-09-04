@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import * as v from "valibot";
 
+import { auditRecordSchema } from "./client-schemas.ts";
 import {
   authHeaders,
   bootstrapUser,
@@ -7,6 +9,20 @@ import {
   TEST_BOOTSTRAP_TOKEN,
 } from "./harness.ts";
 import { randomApiKey } from "./keys.ts";
+
+const keyResponseSchema = v.looseObject({
+  key: v.string(),
+  prefix: v.string(),
+});
+
+const auditPageSchema = v.looseObject({
+  events: v.array(auditRecordSchema),
+  nextCursor: v.string(),
+});
+
+const auditPageWithoutCursorSchema = v.looseObject({
+  events: v.array(auditRecordSchema),
+});
 
 describe("operator lifecycle", () => {
   test("bootstrap is an atomic one-time claim", async () => {
@@ -65,18 +81,18 @@ describe("operator lifecycle", () => {
       "/v1/keys",
       {
         method: "POST",
-        headers: authHeaders(bootstrap, {}),
+        headers: authHeaders(bootstrap, "application/json"),
         body: JSON.stringify({ type: "user", label: "rotating" }),
       },
       env,
     );
-    const first = (await created.json()) as { key: string; prefix: string };
+    const first = v.parse(keyResponseSchema, await created.json());
     const rotated = await app.request(
       `/v1/keys/${first.prefix}/rotate`,
-      { method: "POST", headers: authHeaders(bootstrap, {}), body: "{}" },
+      { method: "POST", headers: authHeaders(bootstrap, "application/json"), body: "{}" },
       env,
     );
-    const second = (await rotated.json()) as { key: string; prefix: string };
+    const second = v.parse(keyResponseSchema, await rotated.json());
     expect(second.prefix).not.toBe(first.prefix);
     expect(
       (await app.request("/v1/projects", { headers: authHeaders(first.key) }, env))
@@ -92,18 +108,16 @@ describe("operator lifecycle", () => {
       { headers: authHeaders(bootstrap) },
       env,
     );
-    const firstPage = (await firstPageResponse.json()) as {
-      events: Array<{ id: string }>;
-      nextCursor: string;
-    };
+    const firstPage = v.parse(auditPageSchema, await firstPageResponse.json());
     const secondPageResponse = await app.request(
       `/v1/audit?limit=2&cursor=${encodeURIComponent(firstPage.nextCursor)}`,
       { headers: authHeaders(bootstrap) },
       env,
     );
-    const secondPage = (await secondPageResponse.json()) as {
-      events: Array<{ id: string }>;
-    };
+    const secondPage = v.parse(
+      auditPageWithoutCursorSchema,
+      await secondPageResponse.json(),
+    );
     expect(firstPage.events).toHaveLength(2);
     expect(secondPage.events.length).toBeGreaterThan(0);
     expect(

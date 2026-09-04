@@ -7,6 +7,7 @@ import {
   assertGitHubAuthorizationPage,
   assertGitHubAuthorizationUrl,
 } from "../src/operational-proofs.ts";
+import * as v from "valibot";
 
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 const origin = "http://127.0.0.1:5173";
@@ -125,9 +126,14 @@ async function beginIdentityAuthorization(): Promise<string> {
   if (!response.ok) throw new Error(`identity OAuth start failed (${response.status})`);
   const location = response.headers.get("location");
   if (location !== null) return location;
-  const body = (await response.json()) as { url?: unknown };
-  if (typeof body.url !== "string") throw new Error("identity OAuth returned no URL");
-  return body.url;
+  const parsed = v.safeParse(
+    v.looseObject({ url: v.optional(v.string()) }),
+    await response.json(),
+  );
+  if (!parsed.success || !v.is(v.string(), parsed.output.url)) {
+    throw new Error("identity OAuth returned no URL");
+  }
+  return parsed.output.url;
 }
 
 async function beginGitHubAppAuthorization(): Promise<string> {
@@ -164,8 +170,8 @@ async function assertGitHubRecognizes(authorizationUrl: string): Promise<void> {
 }
 
 if (import.meta.main) {
-  void main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : "OAuth acceptance failed");
+  void main().catch((cause: unknown) => {
+    console.error(cause instanceof Error ? cause.message : "OAuth acceptance failed");
     process.exit(1);
   });
 }

@@ -20,10 +20,11 @@
  * @see {@link https://vault.buildwithfriends.dev/concepts/keys-and-policy/}
  */
 import type { ApiKeyRecord, SecretKind } from "./types.ts";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 export class PolicyError extends Error {
-  readonly status: number;
-  constructor(status: number, message: string) {
+  readonly status: ContentfulStatusCode;
+  constructor(status: ContentfulStatusCode, message: string) {
     super(message);
     this.name = "PolicyError";
     this.status = status;

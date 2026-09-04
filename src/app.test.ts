@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test";
+import { z } from "zod";
 
 import { authHeaders, bootstrapUser, createTestVault } from "./harness.ts";
+
+const secretsParser = z.looseObject({
+  secrets: z.array(
+    z.looseObject({ name: z.string(), kind: z.string(), value: z.optional(z.string()) }),
+  ),
+});
+const keyParser = z.looseObject({ key: z.string() });
+const errorParser = z.looseObject({ error: z.string() });
 
 describe("worker api", () => {
   test("human can set a secret, list hides it, run-shaped get returns it", async () => {
@@ -10,7 +19,7 @@ describe("worker api", () => {
       "/v1/projects",
       {
         method: "POST",
-        headers: authHeaders(key, {}),
+        headers: authHeaders(key, "application/json"),
         body: JSON.stringify({ name: "demo" }),
       },
       env,
@@ -19,7 +28,7 @@ describe("worker api", () => {
       "/v1/projects/demo/environments/dev/secrets",
       {
         method: "PATCH",
-        headers: authHeaders(key, {}),
+        headers: authHeaders(key, "application/json"),
         body: JSON.stringify({
           set: [{ name: "DATABASE_URL", value: "postgres://x", kind: "secret" }],
         }),
@@ -35,9 +44,7 @@ describe("worker api", () => {
       },
       env,
     );
-    const listedBody = (await listed.json()) as {
-      secrets: Array<{ name: string; kind: string; value?: string }>;
-    };
+    const listedBody = z.parse(secretsParser, await listed.json());
     expect(listedBody.secrets).toEqual([{ name: "DATABASE_URL", kind: "secret" }]);
 
     const shown = await app.request(
@@ -47,7 +54,7 @@ describe("worker api", () => {
       },
       env,
     );
-    const shownBody = (await shown.json()) as { secrets: Array<{ value?: string }> };
+    const shownBody = z.parse(secretsParser, await shown.json());
     expect(shownBody.secrets[0]?.value).toBe("postgres://x");
   });
 
@@ -58,7 +65,7 @@ describe("worker api", () => {
       "/v1/projects",
       {
         method: "POST",
-        headers: authHeaders(key, {}),
+        headers: authHeaders(key, "application/json"),
         body: JSON.stringify({ name: "demo" }),
       },
       env,
@@ -67,7 +74,7 @@ describe("worker api", () => {
       "/v1/projects/demo/environments/dev/secrets",
       {
         method: "PATCH",
-        headers: authHeaders(key, {}),
+        headers: authHeaders(key, "application/json"),
         body: JSON.stringify({ set: [{ name: "X", value: "", kind: "secret" }] }),
       },
       env,
@@ -78,7 +85,7 @@ describe("worker api", () => {
       "/v1/projects/demo/environments/dev/secrets",
       {
         method: "PATCH",
-        headers: authHeaders(key, {}),
+        headers: authHeaders(key, "application/json"),
         body: JSON.stringify({
           set: [{ name: "TOKEN", value: "super-secret-value", kind: "sealed" }],
         }),
@@ -104,7 +111,7 @@ describe("worker api", () => {
       "/v1/projects",
       {
         method: "POST",
-        headers: authHeaders(user, {}),
+        headers: authHeaders(user, "application/json"),
         body: JSON.stringify({ name: "demo" }),
       },
       env,
@@ -113,7 +120,7 @@ describe("worker api", () => {
       "/v1/projects/demo/environments/dev/secrets",
       {
         method: "PATCH",
-        headers: authHeaders(user, {}),
+        headers: authHeaders(user, "application/json"),
         body: JSON.stringify({
           set: [{ name: "GITHUB_TOKEN", value: "real-token", kind: "sealed" }],
         }),
@@ -124,7 +131,7 @@ describe("worker api", () => {
       "/v1/keys",
       {
         method: "POST",
-        headers: authHeaders(user, {}),
+        headers: authHeaders(user, "application/json"),
         body: JSON.stringify({
           type: "system",
           mode: "broker",
@@ -134,7 +141,7 @@ describe("worker api", () => {
       },
       env,
     );
-    const broker = ((await created.json()) as { key: string }).key;
+    const broker = z.parse(keyParser, await created.json()).key;
 
     const shown = await app.request(
       "/v1/projects/demo/environments/dev/secrets?show=1",
@@ -162,7 +169,7 @@ describe("worker api", () => {
       env,
     );
     expect(listed.status).toBe(200);
-    const listedBody = (await listed.json()) as { secrets: Array<{ name: string }> };
+    const listedBody = z.parse(secretsParser, await listed.json());
     expect(listedBody.secrets[0]?.name).toBe("GITHUB_TOKEN");
   });
 
@@ -173,7 +180,7 @@ describe("worker api", () => {
       "/v1/projects",
       {
         method: "POST",
-        headers: authHeaders(user, {}),
+        headers: authHeaders(user, "application/json"),
         body: JSON.stringify({ name: "demo" }),
       },
       env,
@@ -182,7 +189,7 @@ describe("worker api", () => {
       "/v1/projects/demo/environments/dev/secrets",
       {
         method: "PATCH",
-        headers: authHeaders(user, {}),
+        headers: authHeaders(user, "application/json"),
         body: JSON.stringify({
           set: [{ name: "GITHUB_TOKEN", value: "real-token", kind: "sealed" }],
         }),
@@ -194,16 +201,14 @@ describe("worker api", () => {
       { headers: authHeaders(user) },
       env,
     );
-    const exportedBody = (await exported.json()) as {
-      secrets: Array<{ name: string; value?: string }>;
-    };
+    const exportedBody = z.parse(secretsParser, await exported.json());
     expect(exportedBody.secrets[0]?.value).toBe("real-token");
 
     const created = await app.request(
       "/v1/keys",
       {
         method: "POST",
-        headers: authHeaders(user, {}),
+        headers: authHeaders(user, "application/json"),
         body: JSON.stringify({
           type: "system",
           mode: "broker",
@@ -213,7 +218,7 @@ describe("worker api", () => {
       },
       env,
     );
-    const broker = ((await created.json()) as { key: string }).key;
+    const broker = z.parse(keyParser, await created.json()).key;
     const denied = await app.request(
       "/v1/projects/demo/environments/dev/secrets?export=1",
       { headers: authHeaders(broker) },
@@ -229,7 +234,7 @@ describe("worker api", () => {
       "/v1/projects",
       {
         method: "POST",
-        headers: authHeaders(key, {}),
+        headers: authHeaders(key, "application/json"),
         body: JSON.stringify({ name: "demo" }),
       },
       env,
@@ -240,13 +245,13 @@ describe("worker api", () => {
       "/v1/projects",
       {
         method: "POST",
-        headers: authHeaders(key, {}),
+        headers: authHeaders(key, "application/json"),
         body: JSON.stringify({ name: "Demo" }),
       },
       env,
     );
     expect(duplicate.status).toBe(409);
-    const conflictBody = (await duplicate.json()) as { error: string };
+    const conflictBody = z.parse(errorParser, await duplicate.json());
     expect(conflictBody).toEqual({ error: 'project "demo" already exists' });
   });
 
@@ -257,7 +262,7 @@ describe("worker api", () => {
       "/v1/projects",
       {
         method: "POST",
-        headers: authHeaders(key, {}),
+        headers: authHeaders(key, "application/json"),
         body: JSON.stringify({ name: "demo" }),
       },
       env,
@@ -267,20 +272,20 @@ describe("worker api", () => {
       "/v1/projects/demo/environments",
       {
         method: "POST",
-        headers: authHeaders(key, {}),
+        headers: authHeaders(key, "application/json"),
         body: JSON.stringify({ name: "dev" }),
       },
       env,
     );
     expect(duplicate.status).toBe(409);
-    const conflictBody = (await duplicate.json()) as { error: string };
+    const conflictBody = z.parse(errorParser, await duplicate.json());
     expect(conflictBody).toEqual({ error: 'environment "dev" already exists' });
 
     const fresh = await app.request(
       "/v1/projects/demo/environments",
       {
         method: "POST",
-        headers: authHeaders(key, {}),
+        headers: authHeaders(key, "application/json"),
         body: JSON.stringify({ name: "staging" }),
       },
       env,

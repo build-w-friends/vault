@@ -12,14 +12,16 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import * as v from "valibot";
 
 const RECEIPT_VERSION = 1;
 
-type InstallReceipt = {
-  version: typeof RECEIPT_VERSION;
-  installedPath: string;
-  sha256: string;
-};
+const installReceiptSchema = v.looseObject({
+  version: v.literal(RECEIPT_VERSION),
+  installedPath: v.string(),
+  sha256: v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/u)),
+});
+type InstallReceipt = v.InferOutput<typeof installReceiptSchema>;
 
 export type InstallResult = {
   installedPath: string;
@@ -125,26 +127,17 @@ function assertRegularFile(path: string, label: string): void {
 }
 
 function readReceipt(path: string): InstallReceipt {
-  let parsed: unknown;
+  let source: unknown;
   try {
-    parsed = JSON.parse(readFileSync(path, "utf8"));
+    source = JSON.parse(readFileSync(path, "utf8"));
   } catch {
     throw new Error(`vault install receipt is unreadable: ${path}`);
   }
-  if (
-    typeof parsed !== "object" ||
-    parsed == null ||
-    !("version" in parsed) ||
-    parsed.version !== RECEIPT_VERSION ||
-    !("installedPath" in parsed) ||
-    typeof parsed.installedPath !== "string" ||
-    !("sha256" in parsed) ||
-    typeof parsed.sha256 !== "string" ||
-    !/^[a-f0-9]{64}$/u.test(parsed.sha256)
-  ) {
+  const parsed = v.safeParse(installReceiptSchema, source);
+  if (!parsed.success) {
     throw new Error(`vault install receipt is invalid: ${path}`);
   }
-  return parsed as InstallReceipt;
+  return parsed.output;
 }
 
 function sha256File(path: string): string {

@@ -1,4 +1,5 @@
 import sodium from "libsodium-wrappers";
+import { z } from "zod";
 
 import type { FetchLike } from "./push-cloudflare.ts";
 import { githubOwnerRepo } from "./repo-config.ts";
@@ -8,6 +9,23 @@ export type GithubPushTarget = {
   repo: string;
   token: string;
 };
+
+const githubListingParser = z.preprocess(
+  (value) => (Array.isArray(value) ? Object.create(value) : value),
+  z.object({
+    secrets: z.array(
+      z.preprocess(
+        (value) => (Array.isArray(value) ? Object.create(value) : value),
+        z.object({ name: z.string() }),
+      ),
+    ),
+  }),
+);
+const githubListingNamesParser = githubListingParser
+  .transform((listing) => listing.secrets.map((entry) => entry.name))
+  .nullable()
+  .catch(null);
+const githubPublicKeyParser = z.object({ key: z.string(), key_id: z.string() });
 
 export async function encryptGithubSecret(
   value: string,
@@ -45,22 +63,9 @@ async function githubJson(
   return { status: response.status, body };
 }
 
-export function namesFromGithubListing(listing: unknown): string[] | null {
-  if (typeof listing !== "object" || listing == null) return null;
-  const secrets = (listing as { secrets?: unknown }).secrets;
-  if (!Array.isArray(secrets)) return null;
-  const names: string[] = [];
-  for (const entry of secrets) {
-    if (
-      typeof entry === "object" &&
-      entry != null &&
-      typeof (entry as { name?: unknown }).name === "string"
-    ) {
-      names.push((entry as { name: string }).name);
-    } else return null;
-  }
-  return names;
-}
+export const namesFromGithubListing = githubListingNamesParser.parse.bind(
+  githubListingNamesParser,
+);
 
 export async function listGithubSecretNames(
   target: GithubPushTarget,
@@ -98,19 +103,19 @@ export async function pushGithubSecrets(
   if (keyResponse.status < 200 || keyResponse.status >= 300) {
     throw new Error(`GitHub public key failed: ${keyResponse.status}`);
   }
-  const keyBody = keyResponse.body as { key?: unknown; key_id?: unknown };
-  if (typeof keyBody.key !== "string" || typeof keyBody.key_id !== "string") {
+  const keyBody = githubPublicKeyParser.safeParse(keyResponse.body);
+  if (!keyBody.success) {
     throw new Error("GitHub public key was unreadable");
   }
   for (const [name, value] of Object.entries(values)) {
-    const encrypted_value = await encryptGithubSecret(value, keyBody.key);
+    const encrypted_value = await encryptGithubSecret(value, keyBody.data.key);
     const put = await githubJson(
       `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/actions/secrets/${encodeURIComponent(name)}`,
       target.token,
       {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ encrypted_value, key_id: keyBody.key_id }),
+        body: JSON.stringify({ encrypted_value, key_id: keyBody.data.key_id }),
       },
       fetchImpl,
     );

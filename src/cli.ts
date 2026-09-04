@@ -77,7 +77,11 @@ type Flags = {
   rest: string[];
 };
 
-const stringFlags = new Map<string, keyof Flags>([
+type TextFlag = {
+  [Key in keyof Flags]-?: Flags[Key] extends string | undefined ? Key : never;
+}[keyof Flags];
+
+const stringFlags = new Map<string, TextFlag>([
   ["--api-url", "apiUrl"],
   ["--project", "project"],
   ["--env", "env"],
@@ -96,7 +100,9 @@ const stringFlags = new Map<string, keyof Flags>([
   ["--cursor", "cursor"],
 ]);
 
-export function parseArgv(argv: string[]): { command: string; flags: Flags } {
+type ParseArgvResult = { command: string; flags: Flags };
+
+export function parseArgv(argv: string[]): ParseArgvResult {
   const flags: Flags = {
     scopes: [],
     yes: false,
@@ -152,7 +158,7 @@ export function parseArgv(argv: string[]): { command: string; flags: Flags } {
     if (field != null) {
       const value = argv[i + 1];
       if (value == null) throw new Error(`${token} requires a value`);
-      (flags as Record<string, unknown>)[field] = value;
+      flags[field] = value;
       i += 2;
       continue;
     }
@@ -187,11 +193,11 @@ function session(flags: Flags, cwd = process.cwd()) {
     // Deliberately lazy. Only the three commands that read the Wrangler
     // contract may fail on an unselected environment; `vault secrets list`
     // has no business caring which Worker environment exists.
-    wranglerEnvironment: (): WranglerEnvironmentConfig | null =>
-      resolveWranglerEnvironment(repo, {
-        vaultEnv: env,
-        ...(flags.wranglerEnv != null ? { wranglerEnv: flags.wranglerEnv } : {}),
-      }),
+    wranglerEnvironment: (): WranglerEnvironmentConfig | null => {
+      const options: Parameters<typeof resolveWranglerEnvironment>[1] = { vaultEnv: env };
+      if (flags.wranglerEnv != null) options.wranglerEnv = flags.wranglerEnv;
+      return resolveWranglerEnvironment(repo, options);
+    },
   };
 }
 
@@ -220,10 +226,11 @@ function enumValue<T extends string>(
   label: string,
 ): T {
   const selected = value ?? fallback;
-  if (!allowed.includes(selected as T)) {
+  const matched = allowed.find((candidate) => candidate === selected);
+  if (matched === undefined) {
     throw new Error(`${label} must be one of: ${allowed.join(", ")}`);
   }
-  return selected as T;
+  return matched;
 }
 
 function parseScopes(values: string[]): Scope[] {
@@ -548,13 +555,17 @@ async function runKeys(flags: Flags, io: { log: (value: string) => void }) {
       "--permission",
     );
     const mode = enumValue<KeyMode>(flags.mode, ["inject", "broker"], "inject", "--mode");
-    const created = await client.createKey({
+    const keyOptions: Parameters<VaultClient["createKey"]>[0] = {
       type,
       label: flags.label,
       permission,
-      ...(type === "system" ? { mode, scopes: parseScopes(flags.scopes) } : {}),
       expiresInDays: flags.expiresInDays,
-    });
+    };
+    if (type === "system") {
+      keyOptions.mode = mode;
+      keyOptions.scopes = parseScopes(flags.scopes);
+    }
+    const created = await client.createKey(keyOptions);
     io.log(`key ${created.prefix} (shown once): ${created.key}`);
     return 0;
   }
@@ -585,14 +596,13 @@ async function runRoutes(flags: Flags, io: { log: (value: string) => void }) {
   if (sub === "put") {
     const secret = flags.rest[1];
     if (secret == null) throw new Error("usage: vault routes put SECRET [options]");
-    const route = await client.putRoute(project, env, {
-      secret,
-      ...(flags.preset != null ? { preset: flags.preset } : {}),
-      ...(flags.host != null ? { host: flags.host } : {}),
-      ...(flags.header != null ? { header: flags.header } : {}),
-      ...(flags.dummyEnvName != null ? { dummyEnvName: flags.dummyEnvName } : {}),
-      ...(flags.dummyValue != null ? { dummyValue: flags.dummyValue } : {}),
-    });
+    const routeOptions: Parameters<VaultClient["putRoute"]>[2] = { secret };
+    if (flags.preset != null) routeOptions.preset = flags.preset;
+    if (flags.host != null) routeOptions.host = flags.host;
+    if (flags.header != null) routeOptions.header = flags.header;
+    if (flags.dummyEnvName != null) routeOptions.dummyEnvName = flags.dummyEnvName;
+    if (flags.dummyValue != null) routeOptions.dummyValue = flags.dummyValue;
+    const route = await client.putRoute(project, env, routeOptions);
     io.log(route.host);
     return 0;
   }
@@ -629,13 +639,14 @@ async function runInjected(flags: Flags): Promise<number> {
   if (flags.rest.length === 0) throw new Error("usage: vault run -- CMD");
   // One resolver for `vault run` and the Vite plugin. Two of them drifted once
   // already: only this one rejected an empty value.
-  const injected = await loadRequiredSecretValues({
+  const injectOptions: Parameters<typeof loadRequiredSecretValues>[0] = {
     cwd,
     client,
     project,
     env,
-    ...(flags.wranglerEnv != null ? { wranglerEnv: flags.wranglerEnv } : {}),
-  });
+  };
+  if (flags.wranglerEnv != null) injectOptions.wranglerEnv = flags.wranglerEnv;
+  const injected = await loadRequiredSecretValues(injectOptions);
   return spawnCommand(flags.rest, {
     ...process.env,
     ...injected,
@@ -666,6 +677,8 @@ function spawnCommand(argv: string[], env: ProcessEnvironment): Promise<number> 
   if (command == null) return Promise.resolve(1);
   return new Promise((finish) => {
     const child = spawn(command, args, {
+      // SAFETY: spawn accepts string environment entries; generated Worker declarations
+      // add required vault bindings to ProcessEnv that a child process does not need.
       env: env as NodeJS.ProcessEnv,
       stdio: "inherit",
     });

@@ -1,13 +1,18 @@
 import { createServer } from "node:http";
 
 import { describe, expect, test } from "bun:test";
+import * as v from "valibot";
 
 import { dummyEnvFor, startProxy } from "./proxy.ts";
 import type { RouteRecord, SecretRecord } from "./types.ts";
 
+const listenerAddressSchema = v.object({ port: v.number() });
+
 describe("proxy", () => {
   test("child env holds dummies while the origin sees the real header", async () => {
-    const seen: { authorization?: string } = {};
+    type SeenFields = { authorization?: string };
+
+    const seen: SeenFields = {};
     const origin = await new Promise<{ port: number; close: () => Promise<void> }>(
       (resolve) => {
         const server = createServer((req, res) => {
@@ -17,10 +22,10 @@ describe("proxy", () => {
         });
         server.listen(0, "127.0.0.1", () => {
           const address = server.address();
-          if (address == null || typeof address === "string")
-            throw new Error("bind failed");
+          const parsedAddress = v.safeParse(listenerAddressSchema, address);
+          if (!parsedAddress.success) throw new Error("bind failed");
           resolve({
-            port: address.port,
+            port: parsedAddress.output.port,
             close: () =>
               new Promise((done, reject) => {
                 server.close((error) => {

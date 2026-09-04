@@ -12,11 +12,12 @@ import { fileURLToPath } from "node:url";
 
 import { VaultClient } from "../src/client.ts";
 import { readConfig } from "../src/config.ts";
-import { parseJsonc } from "../src/jsonc.ts";
+import { stripJsonComments } from "../src/jsonc.ts";
 import {
   d1DatabaseIdFromListOutput,
   deployedWorkersDevUrl,
 } from "../src/operational-proofs.ts";
+import * as v from "valibot";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const sourceConfigPath = join(packageRoot, "wrangler.jsonc");
@@ -24,17 +25,17 @@ const project = "bwf-shadow";
 const canaryEnvironment = "prod-worker";
 const canarySecret = "POSTHOG_PROJECT_TOKEN";
 
-type ProductionConfig = {
-  readonly account_id: string;
-  readonly compatibility_date: string;
-  readonly compatibility_flags?: readonly string[];
-  readonly env: {
-    readonly production: {
-      readonly vars: Record<string, string>;
-      readonly secrets_store_secrets: readonly Record<string, string>[];
-    };
-  };
-};
+const productionConfigSchema = v.looseObject({
+  account_id: v.string(),
+  compatibility_date: v.string(),
+  compatibility_flags: v.optional(v.array(v.string())),
+  env: v.looseObject({
+    production: v.looseObject({
+      vars: v.looseObject({}),
+      secrets_store_secrets: v.array(v.looseObject({})),
+    }),
+  }),
+});
 
 async function main(): Promise<void> {
   const stamp = new Date().toISOString().replaceAll(/[:.]/gu, "-");
@@ -81,7 +82,7 @@ async function main(): Promise<void> {
   const temporaryConfigPath = join(temporaryDirectory, "wrangler.json");
   let databaseId: string | null = null;
   let workerCreated = false;
-  let failure: unknown = null;
+  const cleanupFailures: string[] = [];
   try {
     await command(["bunx", "wrangler", "d1", "create", databaseName]);
     databaseId = d1DatabaseIdFromListOutput(
@@ -119,10 +120,7 @@ async function main(): Promise<void> {
       "PASS  disposable D1 import decrypted through the production root binding",
     );
     console.log("PASS  recovered operator API key, canary secret, and audit continuity");
-  } catch (error) {
-    failure = error;
   } finally {
-    const cleanupFailures: string[] = [];
     if (workerCreated) {
       try {
         await command([
@@ -155,24 +153,23 @@ async function main(): Promise<void> {
       }
     }
     rmSync(temporaryDirectory, { recursive: true, force: true });
-    if (cleanupFailures.length > 0) {
-      failure ??= new Error(
-        `disposable recovery resources need manual cleanup: ${cleanupFailures.join(", ")}`,
-      );
-    } else if (databaseId !== null) {
+    if (cleanupFailures.length === 0 && databaseId !== null) {
       console.log("PASS  disposable Worker and D1 database removed");
     }
   }
-  if (failure !== null) throw failure;
+  if (cleanupFailures.length > 0) {
+    throw new Error(
+      `disposable recovery resources need manual cleanup: ${cleanupFailures.join(", ")}`,
+    );
+  }
   console.log(`Recovery evidence retained at ${evidenceDirectory}`);
 }
 
-function productionConfig(): ProductionConfig {
-  const value = parseJsonc(readFileSync(sourceConfigPath, "utf8"));
-  if (typeof value !== "object" || value === null) {
-    throw new Error("vault Wrangler configuration is invalid");
-  }
-  return value as ProductionConfig;
+function productionConfig(): v.InferOutput<typeof productionConfigSchema> {
+  const value = JSON.parse(stripJsonComments(readFileSync(sourceConfigPath, "utf8")));
+  const parsed = v.safeParse(productionConfigSchema, value);
+  if (!parsed.success) throw new Error("vault Wrangler configuration is invalid");
+  return parsed.output;
 }
 
 function writeTemporaryConfig(
@@ -271,8 +268,8 @@ async function command(argv: readonly string[]): Promise<string> {
 }
 
 if (import.meta.main) {
-  void main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : "recovery rehearsal failed");
+  void main().catch((cause: unknown) => {
+    console.error(cause instanceof Error ? cause.message : "recovery rehearsal failed");
     process.exit(1);
   });
 }

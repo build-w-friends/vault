@@ -1,23 +1,33 @@
+import { rejects } from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
+import { VaultClient } from "./client.ts";
 import { applyProcessEnv, InjectError, loadRequiredSecretValues } from "./inject.ts";
+import type { RepoContext } from "./repo-config.ts";
 import { WranglerEnvironmentError } from "./repo-config.ts";
-import type { VaultClient } from "./client.ts";
 
 /** Holds NEED_A and an unrelated name; never NEED_B. */
-function stubClient(): VaultClient {
-  return {
-    exportSecrets: async () => ({
-      secrets: [
-        { name: "NEED_A", value: "one", kind: "sealed" },
-        { name: "EXTRA", value: "nope", kind: "sealed" },
-      ],
-    }),
-  } as unknown as VaultClient;
+async function withStubClient<T>(run: (client: VaultClient) => Promise<T>): Promise<T> {
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () =>
+      Response.json({
+        secrets: [
+          { name: "NEED_A", value: "one", kind: "sealed" },
+          { name: "EXTRA", value: "nope", kind: "sealed" },
+        ],
+      }),
+  });
+  try {
+    return await run(new VaultClient(server.url.origin, "test-key"));
+  } finally {
+    await server.stop(true);
+  }
 }
 
 describe("inject", () => {
@@ -27,33 +37,33 @@ describe("inject", () => {
       join(root, "wrangler.jsonc"),
       `{ "secrets": { "required": ["NEED_A", "NEED_B"] } }\n`,
     );
-    const client = stubClient();
+    await withStubClient(async (client) => {
+      try {
+        await loadRequiredSecretValues({
+          cwd: root,
+          client,
+          project: "bwf",
+          env: "dev",
+        });
+        throw new Error("expected missing NEED_B");
+      } catch (error) {
+        expect(error instanceof InjectError).toBe(true);
+        expect(error instanceof Error && error.message.includes("NEED_B")).toBe(true);
+      }
 
-    try {
-      await loadRequiredSecretValues({
+      writeFileSync(
+        join(root, "wrangler.jsonc"),
+        `{ "secrets": { "required": ["NEED_A"] } }\n`,
+      );
+      const values = await loadRequiredSecretValues({
         cwd: root,
         client,
         project: "bwf",
         env: "dev",
       });
-      throw new Error("expected missing NEED_B");
-    } catch (error) {
-      expect(error instanceof InjectError).toBe(true);
-      expect(error instanceof Error && error.message.includes("NEED_B")).toBe(true);
-    }
-
-    writeFileSync(
-      join(root, "wrangler.jsonc"),
-      `{ "secrets": { "required": ["NEED_A"] } }\n`,
-    );
-    const values = await loadRequiredSecretValues({
-      cwd: root,
-      client,
-      project: "bwf",
-      env: "dev",
+      expect(values).toEqual({ NEED_A: "one" });
+      expect(Object.hasOwn(values, "EXTRA")).toBe(false);
     });
-    expect(values).toEqual({ NEED_A: "one" });
-    expect(Object.hasOwn(values, "EXTRA")).toBe(false);
   });
 
   test("applyProcessEnv writes those names only", () => {
@@ -71,7 +81,9 @@ describe("inject", () => {
  * consumer read an empty string and the vault reported success.
  */
 describe("an environment-scoped contract", () => {
-  function repository(vaultJson: Record<string, unknown>): string {
+  type VaultFixture = Pick<RepoContext["vault"], "wranglerEnvironments">;
+
+  function repository(vaultJson: VaultFixture): string {
     const root = mkdtempSync(join(tmpdir(), "vault-inject-env-"));
     writeFileSync(
       join(root, "wrangler.jsonc"),
@@ -86,38 +98,46 @@ describe("an environment-scoped contract", () => {
   }
 
   test("errors on the environment's missing name instead of injecting nothing", async () => {
-    const root = repository({ wranglerEnvironments: { prod: "production" } });
-    expect(
-      loadRequiredSecretValues({
-        cwd: root,
-        client: stubClient(),
-        project: "bwf",
-        env: "prod",
-      }),
-    ).rejects.toThrow(/NEED_B/u);
+    await withStubClient(async (client) => {
+      const root = repository({ wranglerEnvironments: { prod: "production" } });
+      await rejects(
+        loadRequiredSecretValues({
+          cwd: root,
+          client,
+          project: "bwf",
+          env: "prod",
+        }),
+        /NEED_B/u,
+      );
+    });
   });
 
   test("refuses to guess when nothing selects an environment", async () => {
-    const root = repository({});
-    expect(
-      loadRequiredSecretValues({
-        cwd: root,
-        client: stubClient(),
-        project: "bwf",
-        env: "prod",
-      }),
-    ).rejects.toThrow(WranglerEnvironmentError);
+    await withStubClient(async (client) => {
+      const root = repository({});
+      await rejects(
+        loadRequiredSecretValues({
+          cwd: root,
+          client,
+          project: "bwf",
+          env: "prod",
+        }),
+        WranglerEnvironmentError,
+      );
+    });
   });
 
   test("still injects the top-level list for a vault environment mapped to it", async () => {
-    const root = repository({ wranglerEnvironments: { dev: null } });
-    expect(
-      await loadRequiredSecretValues({
-        cwd: root,
-        client: stubClient(),
-        project: "bwf",
-        env: "dev",
-      }),
-    ).toEqual({ NEED_A: "one" });
+    await withStubClient(async (client) => {
+      const root = repository({ wranglerEnvironments: { dev: null } });
+      expect(
+        await loadRequiredSecretValues({
+          cwd: root,
+          client,
+          project: "bwf",
+          env: "dev",
+        }),
+      ).toEqual({ NEED_A: "one" });
+    });
   });
 });

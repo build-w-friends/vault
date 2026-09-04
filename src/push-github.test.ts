@@ -30,6 +30,31 @@ describe("github push", () => {
     ).toEqual(["CI_TOKEN"]);
   });
 
+  test("rejects malformed public keys before putting any secret", async () => {
+    for (const body of [null, { key: 1, key_id: "1" }, { key: "key", key_id: 1 }]) {
+      let puts = 0;
+      const fetchImpl: import("./push-cloudflare.ts").FetchLike = async (input) => {
+        if (input.endsWith("/public-key")) return Response.json(body);
+        puts += 1;
+        return new Response(null, { status: 204 });
+      };
+      await pushGithubSecrets(
+        { repo: "acme/app", token: "gh" },
+        { CI_TOKEN: "t" },
+        fetchImpl,
+      ).then(
+        () => {
+          throw new Error("Malformed GitHub public key was accepted");
+        },
+        (cause: unknown) => {
+          expect(cause).toBeInstanceOf(Error);
+          expect(cause).toHaveProperty("message", "GitHub public key was unreadable");
+        },
+      );
+      expect(puts).toBe(0);
+    }
+  });
+
   test("puts each secret after fetching the repo public key", async () => {
     const puts: string[] = [];
     const fetchImpl: import("./push-cloudflare.ts").FetchLike = async (input) => {

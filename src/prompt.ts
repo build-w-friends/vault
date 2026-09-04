@@ -1,3 +1,4 @@
+import * as v from "valibot";
 export async function readSecretValue(
   inline: string | undefined,
   stdin: NodeJS.ReadableStream & { isTTY?: boolean } = process.stdin,
@@ -32,7 +33,7 @@ function readHidden(
     stdin.setEncoding?.("utf8");
     let value = "";
     const onData = (chunk: string | Buffer) => {
-      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      const text = v.is(v.string(), chunk) ? chunk : chunk.toString("utf8");
       if (text === "\n" || text === "\r" || text === "\r\n") {
         cleanup();
         stdout.write("\n");

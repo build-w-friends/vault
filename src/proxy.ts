@@ -40,6 +40,7 @@ import forge from "node-forge";
 import { applyInject } from "./presets.ts";
 import type { ProcessEnvironment, RouteRecord, SecretRecord } from "./types.ts";
 import { dummyForProxy } from "./policy.ts";
+import * as v from "valibot";
 
 type ProxyCa = {
   certPem: string;
@@ -92,7 +93,9 @@ function generateProxyCa(): ProxyCa {
   };
 }
 
-function leafForHost(ca: ProxyCa, host: string): { certPem: string; keyPem: string } {
+type LeafForHostResult = { certPem: string; keyPem: string };
+
+function leafForHost(ca: ProxyCa, host: string): LeafForHostResult {
   const keys = opensslRsaPair();
   const cert = forge.pki.createCertificate();
   cert.publicKey = keys.publicKey;
@@ -113,10 +116,7 @@ function leafForHost(ca: ProxyCa, host: string): { certPem: string; keyPem: stri
   };
 }
 
-export function dummyEnvFor(
-  secrets: SecretRecord[],
-  routes: RouteRecord[],
-): Record<string, string> {
+export function dummyEnvFor(secrets: SecretRecord[], routes: RouteRecord[]) {
   const byName = new Map(routes.map((route) => [route.secretName, route]));
   const env: Record<string, string> = {};
   for (const secret of secrets) {
@@ -191,7 +191,7 @@ export async function startProxy(input: {
   const port = await new Promise<number>((resolve, reject) => {
     proxy.listen(input.port ?? 0, "127.0.0.1", () => {
       const address = proxy.address();
-      if (address == null || typeof address === "string") {
+      if (address == null || v.is(v.string(), address)) {
         reject(new Error("proxy failed to bind"));
         return;
       }
@@ -322,7 +322,7 @@ export function proxyChildEnv(
   handle: ProxyHandle,
   extra: Record<string, string | undefined>,
 ): ProcessEnvironment {
-  const child: Record<string, string | undefined> = { ...extra };
+  const child = { ...extra };
   delete child.VAULT_API_KEY;
   delete child.VAULT_API_URL;
   return {

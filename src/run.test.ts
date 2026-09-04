@@ -10,7 +10,7 @@ describe("human run inject", () => {
       "/v1/projects",
       {
         method: "POST",
-        headers: authHeaders(key, {}),
+        headers: authHeaders(key, "application/json"),
         body: JSON.stringify({ name: "demo" }),
       },
       env,
@@ -19,7 +19,7 @@ describe("human run inject", () => {
       "/v1/projects/demo/environments/dev/secrets",
       {
         method: "PATCH",
-        headers: authHeaders(key, {}),
+        headers: authHeaders(key, "application/json"),
         body: JSON.stringify({
           set: [{ name: "DEMO_SECRET", value: "visible-to-run", kind: "secret" }],
         }),
@@ -34,6 +34,7 @@ describe("human run inject", () => {
       },
       env,
     );
+    // SAFETY: The owned show=1 route projects SecretRecord names and optional values.
     const body = (await shown.json()) as {
       secrets: Array<{ name: string; value?: string }>;
     };

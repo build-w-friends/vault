@@ -17,6 +17,7 @@
  * @see {@link https://vault.buildwithfriends.dev/reference/database/}
  */
 import type { VaultCrypto } from "./crypto.ts";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type {
   ApiKeyRecord,
   AuditAction,
@@ -86,8 +87,8 @@ function newId(): string {
   return crypto.randomUUID();
 }
 
-function isUniqueConstraintFailure(error: unknown): boolean {
-  return String(error).includes("UNIQUE constraint failed");
+function isUniqueConstraintFailure(cause: unknown): boolean {
+  return String(cause).includes("UNIQUE constraint failed");
 }
 
 export class VaultStore {
@@ -543,6 +544,8 @@ export class VaultStore {
         host: row.host,
         secretName,
         inject: row.inject,
+        // SAFETY: route rows are written only from RouteRecord.stripHeaders,
+        // serialized as a JSON string array by putRoute.
         stripHeaders: JSON.parse(row.strip_headers) as string[],
         dummyEnvName: row.dummy_env_name,
         dummyValue: row.dummy_value,
@@ -641,6 +644,8 @@ export class VaultStore {
   }
 
   private async toApiKey(row: KeyRow): Promise<ApiKeyRecord> {
+    // SAFETY: createKey encrypts the JSON serialization of its validated Scope[];
+    // rotateKey preserves that value when issuing the replacement key.
     const scopes =
       row.scopes_encrypted != null
         ? (JSON.parse(await this.vaultCrypto.decrypt(row.scopes_encrypted)) as Scope[])
@@ -666,8 +671,8 @@ export class VaultStore {
 }
 
 export class StoreError extends Error {
-  readonly status: number;
-  constructor(status: number, message: string) {
+  readonly status: ContentfulStatusCode;
+  constructor(status: ContentfulStatusCode, message: string) {
     super(message);
     this.name = "StoreError";
     this.status = status;

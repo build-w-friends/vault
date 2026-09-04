@@ -46,6 +46,7 @@ import type {
   Permission,
   SecretKind,
 } from "./types.ts";
+import * as v from "valibot";
 
 type Variables = {
   store: VaultStore;
@@ -108,6 +109,10 @@ const brokerApplySchema = z
     headers: z.record(z.string(), z.string()),
   })
   .strict();
+const auditCursorSchema = v.object({
+  createdAt: v.string(),
+  id: v.string(),
+});
 
 type AppBindings = { DB: D1Database };
 
@@ -130,7 +135,7 @@ export function createApp(
       error instanceof StoreError ||
       error instanceof KeyringError
     ) {
-      return c.json({ error: error.message }, error.status as 400);
+      return c.json({ error: error.message }, error.status);
     }
     if (error instanceof z.ZodError) {
       return c.json({ error: "request body is invalid" }, 400);
@@ -519,12 +524,12 @@ export function createApp(
       throw new PolicyError(400, "audit limit must be an integer from 1 to 200");
     }
     const cursor = decodeAuditCursor(c.req.query("cursor"));
-    const events = await c.get("store").listAudit({
-      limit,
-      ...(cursor == null
-        ? {}
-        : { beforeCreatedAt: cursor.createdAt, beforeId: cursor.id }),
-    });
+    const auditInput: Parameters<VaultStore["listAudit"]>[0] = { limit };
+    if (cursor != null) {
+      auditInput.beforeCreatedAt = cursor.createdAt;
+      auditInput.beforeId = cursor.id;
+    }
+    const events = await c.get("store").listAudit(auditInput);
     const last = events.at(-1);
     await c.get("store").audit({
       keyPrefix: c.get("key").keyPrefix,
@@ -629,16 +634,8 @@ function decodeAuditCursor(
   if (value == null) return null;
   try {
     const parsed: unknown = JSON.parse(atob(value));
-    if (
-      typeof parsed === "object" &&
-      parsed != null &&
-      "createdAt" in parsed &&
-      "id" in parsed &&
-      typeof parsed.createdAt === "string" &&
-      typeof parsed.id === "string"
-    ) {
-      return { createdAt: parsed.createdAt, id: parsed.id };
-    }
+    const result = v.safeParse(auditCursorSchema, parsed);
+    if (result.success) return result.output;
   } catch {
     // The same generic error is returned for every malformed cursor.
   }
