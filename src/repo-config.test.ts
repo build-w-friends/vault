@@ -202,18 +202,19 @@ describe("poc/analytics", () => {
     "analytics",
   );
 
-  test("resolves API_TOKEN for the prod vault environment", () => {
+  test("resolves the account and required secrets for the prod vault environment", () => {
     const repo = loadRepoContext(analytics);
     const wrangler = resolveWranglerEnvironment(repo, { vaultEnv: "prod" });
     expect(wrangler?.environment).toBe("production");
     expect(wrangler?.name).toBe("bwf-analytics");
-    expect(wrangler?.required).toContain("API_TOKEN");
+    expect(wrangler?.accountId).toBe("00000000000000000000000000000000");
+    expect(wrangler?.required).toEqual(["API_TOKEN", "CLOUDFLARE_GATEWAY_READ_TOKEN"]);
   });
 
   test("keeps the dev vault environment on the top-level list", () => {
     const repo = loadRepoContext(analytics);
     const wrangler = resolveWranglerEnvironment(repo, { vaultEnv: "dev" });
     expect(wrangler?.environment).toBe(null);
-    expect(wrangler?.required).toEqual([]);
+    expect(wrangler?.required).toEqual(["CLOUDFLARE_GATEWAY_READ_TOKEN"]);
   });
 });
