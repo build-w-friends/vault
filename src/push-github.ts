@@ -1,3 +1,7 @@
+/* oxlint-disable no-named-as-default-member -- libsodium-wrappers' ESM build only re-exports a
+   small static surface (ready, from_base64, to_base64, ...); crypto_box_seal and friends are
+   attached to the default export at runtime once `ready` resolves, so they are not real named
+   exports despite the package's .d.ts claiming otherwise. */
 import sodium from "libsodium-wrappers";
 import { z } from "zod";
 

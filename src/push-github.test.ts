@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+/* oxlint-disable no-named-as-default-member -- see push-github.ts */
 import sodium from "libsodium-wrappers";
 
 import {
