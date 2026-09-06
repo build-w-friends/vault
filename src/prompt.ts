@@ -34,22 +34,22 @@ function readHidden(
     let value = "";
     const onData = (chunk: string | Buffer) => {
       const text = v.is(v.string(), chunk) ? chunk : chunk.toString("utf8");
-      if (text === "\n" || text === "\r" || text === "\r\n") {
-        cleanup();
-        stdout.write("\n");
-        resolve(value);
-        return;
+      for (const character of text) {
+        if (character === "\n" || character === "\r") {
+          cleanup();
+          stdout.write("\n");
+          resolve(value);
+          return;
+        }
+        if (character === "\u0003" || character === "\u0004") {
+          cleanup();
+          reject(new Error("cancelled"));
+          return;
+        }
+        if (character === "\u007f" || character === "\b") {
+          value = value.slice(0, -1);
+        } else value += character;
       }
-      if (text === "\u0003") {
-        cleanup();
-        reject(new Error("cancelled"));
-        return;
-      }
-      if (text === "\u007f" || text === "\b") {
-        value = value.slice(0, -1);
-        return;
-      }
-      value += text;
     };
     const cleanup = () => {
       stdin.setRawMode?.(false);

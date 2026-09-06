@@ -59,3 +59,22 @@ perspective; use the existing bound bootstrap token only after confirming that
 this is the intended recovery point. The CLI will immediately replace the
 15-minute bootstrap key with a durable operator key and revoke the temporary
 key.
+
+## Shared issuers after restore
+
+Restoring D1 does not restore Cloudflare to the same point in time. Provider
+services and tokens created after the bookmark may still exist, while a restored
+request can describe an operation as awaiting execution even though it already ran.
+Restored sessions and memberships can also predate revocation.
+
+Keep member access and provider execution stopped while reconciling. Compare the
+current export, restored request/audit records, and provider inventory. Revoke
+restored sessions and affected issuers with `vault issuance admin`; reconcile
+provider tokens and rotate affected parent credentials before registering replacement
+issuers and allowing fresh logins. Do not execute restored pending requests until
+their provider outcome has been checked.
+
+The ordinary recovery rehearsal proves operator authentication, a canary secret,
+and audit continuity. It does not prove that issuer sessions, token lifecycles, or
+external service effects have been reconciled. Verify those separately before
+reopening member access.

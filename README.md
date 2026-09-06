@@ -211,3 +211,55 @@ bun run types:check
 decrypts a synthetic secret, verifies audit evidence, and removes the temporary
 state. Root `check:poc` and `test:poc` include this package's static and unit
 gates; acceptance remains an explicit runtime proof.
+
+## Shared issuers with human approval
+
+Run `vault issuance setup` to configure GitHub sign-in, then
+`vault issuance connect cloudflare` for guided team/account selection, a prefilled
+Cloudflare account-token page, one hidden token paste, and a final registration
+review. Clack provides arrow-key menus, domain checkboxes, and masked credential
+prompts. A first connection asks for a team name directly; confirmations default
+to No. It discovers provider IDs and resolves member GitHub usernames. This flow
+uses account API tokens, not Cloudflare OAuth. The new operator-only
+`GET /v1/issuance/setup` route must be deployed before the installed CLI can use it.
+See [Connect Cloudflare](https://vault.buildwithfriends.dev/start/connect-cloudflare/).
+
+Start with `vault issuance --help`. Each subcommand has offline help, including
+`vault issuance mcp --help` for the client configuration and tool flow, and
+`vault issuance admin --help` for administrative actions. `vault help issuance
+COMMAND` is also supported. See the public [provisioning guide](https://vault.buildwithfriends.dev/start/provision-services/)
+and [MCP reference](https://vault.buildwithfriends.dev/reference/mcp/).
+
+`vault issuance login --api-url https://YOUR_VAULT_HOST` connects a person through
+GitHub and selects an independent Vault tenant. `vault issuance mcp` works from
+any directory and exposes issuer discovery, immutable requests, browser approval,
+approved provider API operations, native token policies, status, revocation, and
+brokered use. Provider credentials stay inside the Worker or are delivered directly
+to an approved provider destination. `vault issuance admin` accepts configuration over stdin using the operator
+login. `vault issuance inspect REQUEST_ID` returns operator audit evidence without
+credential values. See the [setup and approval contract](../../apps/vault-docs/src/content/docs/concepts/approved-issuance.md).
+
+Apply `0002_issuance.sql` before deploying this code. Configure a GitHub OAuth app,
+its callback, tenant members by GitHub ID, and account-owned Cloudflare issuer
+credentials before live use. No feature flag or new environment credential is
+required: identity configuration and issuer credentials are encrypted D1 records,
+and missing required configuration fails loudly. Cleanup runs every five minutes.
+
+Cloudflare account/zone API operations, multipart Worker uploads, AI requests, and
+native token creation are implemented. A separate BWF AI issuer and other
+providers need provider-specific adapters. Gateway Run is account-wide; no per-gateway
+scope is claimed. Login uses a separate member session; it does not replace the operator login.
+`vault issuance logout` revokes that session before removing the local file.
+Parent policies are immutable; changing one requires revoking and
+registering a new issuer. The unused header-returning broker API has been removed.
+
+Reproduce local acceptance (synthetic providers, real HTTPS and Chromium):
+
+```sh
+bun run --cwd poc/vault acceptance:issuance
+```
+
+Screenshots and a machine-readable receipt appear under
+`poc/vault/.wrangler/issuance-acceptance`. Run `bun run --cwd poc/vault test` and
+`bun run --cwd poc/vault check` for the rest of the Vault suite and Worker bundle.
+This acceptance does not create live provider tokens or deploy anything.

@@ -5,7 +5,8 @@
  * Two argument forms are rejected rather than supported, both because they put
  * a credential into shell history: `--api-key <value>`, and `NAME=value` on
  * `secrets set`. Values come from hidden input, stdin, or the environment.
- * Every destructive command requires an explicit `--yes`.
+ * Project-secret destructive commands require `--yes`; issuance administration
+ * accepts explicit action records, and member requests use browser approval.
  *
  * `run` and `proxy` are the two commands that spawn something. Both strip
  * `VAULT_API_KEY` from the child environment, so a command given secrets cannot
@@ -27,6 +28,7 @@ import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import { runIssuanceCli } from "./issuance/cli.ts";
 import { VaultClient } from "./client.ts";
 import { resolveClientOptions, writeConfig } from "./config.ts";
 import { generateMasterKey } from "./crypto.ts";
@@ -253,8 +255,13 @@ export async function runCli(
       case "help":
       case "-h":
       case "--help":
+        if (flags.rest[0] === "issuance") {
+          return await runIssuanceCli(["help", ...flags.rest.slice(1)], flags.apiUrl, io);
+        }
         io.log(helpText());
         return 0;
+      case "issuance":
+        return await runIssuanceCli(flags.rest, flags.apiUrl, io);
       case "init":
         return initializeLocalVaultAt(process.cwd(), io);
       case "login": {
@@ -706,10 +713,22 @@ function helpText(): string {
   vault run [--wrangler-env NAME] -- CMD    # injects only secrets.required
   vault proxy -- CMD
   vault push                               # explicit provider synchronization
+  vault issuance setup                     # guided identity and member setup
+  vault issuance connect cloudflare         # discover and register a Cloudflare token
+  vault issuance login --api-url URL       # GitHub member login and tenant selection
+  vault issuance mcp                       # AI provisioning and scoped-token tools
+  vault issuance admin | inspect REQUEST_ID | logout
+  vault issuance [COMMAND] --help          # setup, approval flow, and tool reference
   vault init                               # local development only
 
 Secret values and login/bootstrap credentials are read from hidden input or stdin.
-VAULT_API_URL, VAULT_API_KEY, and VAULT_BOOTSTRAP_TOKEN are supported environment inputs.`;
+VAULT_API_URL, VAULT_API_KEY, and VAULT_BOOTSTRAP_TOKEN are supported environment inputs.
+
+Shared issuers can provision Cloudflare services or create tokens after browser
+approval. AI uses Vault references; provider values stay in Vault. Project-secret
+commands use operator/system keys; issuance uses a separate tenant member session.
+
+Documentation: https://vault.buildwithfriends.dev/reference/cli/`;
 }
 
 if (import.meta.main) {

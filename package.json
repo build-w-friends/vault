@@ -27,11 +27,14 @@
     "acceptance": "bun scripts/acceptance.ts",
     "check": "tsc --noEmit && bun run deploy:dry-run",
     "test": "bun test src",
-    "types": "wrangler types --env production --env-interface Env",
+    "types": "wrangler types --env production --env-interface Env && (cd ../.. && bunx oxfmt poc/vault/worker-configuration.d.ts)",
     "types:check": "bun run types && git diff --exit-code -- worker-configuration.d.ts",
-    "uninstall:cli": "bun scripts/uninstall-cli.ts"
+    "uninstall:cli": "bun scripts/uninstall-cli.ts",
+    "acceptance:issuance": "bun scripts/issuance-acceptance.ts"
   },
   "dependencies": {
+    "@clack/prompts": "1.7.0",
+    "@modelcontextprotocol/server": "2.0.0",
     "aws4fetch": "1.0.20",
     "hono": "4.13.5",
     "libsodium-wrappers": "0.7.15",
@@ -44,6 +47,7 @@
     "@types/libsodium-wrappers": "0.7.14",
     "@types/node": "26.4.0",
     "@types/node-forge": "1.3.14",
+    "playwright": "1.62.1",
     "typescript": "7.0.2",
     "vite": "8.2.2",
     "wrangler": "4.126.0"

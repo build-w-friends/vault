@@ -37,8 +37,12 @@ import {
   canManageProjects,
   valueVisibleOnGet,
 } from "./policy.ts";
+import { issuanceRoutes } from "./issuance/routes.ts";
+import { IssuanceStore } from "./issuance/store.ts";
+import { IssuanceService } from "./issuance/service.ts";
+import { adminSchema, id as issuanceId } from "./issuance/contracts.ts";
 import { handleMcp } from "./mcp.ts";
-import { applyInject, genericRoute, routePreset } from "./presets.ts";
+import { genericRoute, routePreset } from "./presets.ts";
 import type {
   ApiKeyMeta,
   ApiKeyRecord,
@@ -101,14 +105,6 @@ const putRouteSchema = z
     dummyValue: z.string().optional(),
   })
   .strict();
-const brokerApplySchema = z
-  .object({
-    project: z.string(),
-    environment: z.string(),
-    host: z.string(),
-    headers: z.record(z.string(), z.string()),
-  })
-  .strict();
 const auditCursorSchema = v.object({
   createdAt: v.string(),
   id: v.string(),
@@ -121,6 +117,8 @@ type AppOptions = {
   activeMasterKeyFingerprint: string;
   keyring?: VaultKeyring;
   inactiveMasterKey?: string;
+  issuanceFetch?: typeof fetch;
+  now?: () => number;
 };
 
 export function createApp(
@@ -180,6 +178,42 @@ export function createApp(
     await attachStore(c, vaultCrypto);
     await attachKey(c);
     await next();
+  });
+
+  app.route("/issuance", issuanceRoutes(vaultCrypto, options.issuanceFetch, options.now));
+  app.get("/v1/issuance/requests/:id", async (c) => {
+    if (!canManageKeys(c.get("key")))
+      throw new PolicyError(403, "only operators inspect issuer requests");
+    const store = new IssuanceStore(c.env.DB, vaultCrypto);
+    const request = await store.request(issuanceId.parse(c.req.param("id")));
+    const events = (
+      await c.env.DB.prepare(
+        "SELECT actor, action, created_at FROM issuance_events WHERE request_id = ? ORDER BY created_at, rowid",
+      )
+        .bind(request.id)
+        .all<{ actor: string; action: string; created_at: number }>()
+    ).results;
+    return c.json({
+      ...(await new IssuanceService(store).view(request)),
+      subject: request.subject,
+      sessionId: request.auth_hash,
+      providerTokenId: request.token_id,
+      events,
+    });
+  });
+  app.get("/v1/issuance/setup", async (c) => {
+    if (!canManageKeys(c.get("key")))
+      throw new PolicyError(403, "only operators inspect issuer setup");
+    return c.json(await new IssuanceStore(c.env.DB, vaultCrypto).setup());
+  });
+  app.post("/v1/issuance/admin", async (c) => {
+    if (!canManageKeys(c.get("key")))
+      throw new PolicyError(403, "only operators manage issuer configuration");
+    await new IssuanceStore(c.env.DB, vaultCrypto).admin(
+      adminSchema.parse(await c.req.json()),
+      c.get("key").keyPrefix,
+    );
+    return c.json({ ok: true });
   });
 
   app.post("/mcp", (c) => handleMcp(c));
@@ -413,40 +447,6 @@ export function createApp(
       secretName: body.secret,
     });
     return c.json({ ok: true, host });
-  });
-
-  app.post("/v1/broker/apply", async (c) => {
-    const key = c.get("key");
-    const store = c.get("store");
-    const body = brokerApplySchema.parse(await c.req.json());
-    assertScope(key, body.project, body.environment);
-    const { environmentId } = await store.requireEnvironment(
-      body.project,
-      body.environment,
-    );
-    const route = await store.findRoute(environmentId, body.host);
-    if (route == null) {
-      await store.audit({
-        keyPrefix: key.keyPrefix,
-        action: "broker",
-        status: "unmatched",
-        host: body.host,
-      });
-      return c.json({ matched: false, headers: body.headers });
-    }
-    const secret = await store.getSecretByName(environmentId, route.secretName);
-    if (secret == null) throw new StoreError(404, "routed secret not found");
-    const headers = new Headers(body.headers);
-    for (const name of route.stripHeaders) headers.delete(name);
-    applyInject(headers, route.inject, secret.value);
-    await store.audit({
-      keyPrefix: key.keyPrefix,
-      action: "broker",
-      status: "ok",
-      host: body.host,
-      secretName: route.secretName,
-    });
-    return c.json({ matched: true, headers: Object.fromEntries(headers.entries()) });
   });
 
   app.get("/v1/keys", async (c) => {

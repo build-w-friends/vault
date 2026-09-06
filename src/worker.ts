@@ -10,7 +10,8 @@
  * missing root, an unparseable one, or one with no prepared wrap are all
  * configuration errors, not conditions to degrade through.
  *
- * `scheduled` runs daily and prunes audit rows past `AUDIT_RETENTION_DAYS`. It
+ * `scheduled` runs every five minutes, reconciles issuer credentials, and prunes
+ * audit rows past `AUDIT_RETENTION_DAYS`. It
  * opens the keyring exactly as a request does, so a misconfigured root fails
  * the cron rather than pruning against the wrong database.
  *
@@ -18,6 +19,8 @@
  */
 import { createApp } from "./app.ts";
 import { MasterKeyError } from "./crypto.ts";
+import { IssuanceStore } from "./issuance/store.ts";
+import { IssuanceService } from "./issuance/service.ts";
 import { VaultStore } from "./db.ts";
 import { VaultKeyring } from "./keyring.ts";
 import {
@@ -54,6 +57,7 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
     const masterKeys = await resolveMasterKeys(env);
     const keyring = await VaultKeyring.open(env.DB, masterKeys.active);
+    await new IssuanceService(new IssuanceStore(env.DB, keyring.crypto)).reconcile();
     const store = new VaultStore(env.DB, keyring.crypto);
     const cutoff = new Date(
       Date.now() - auditRetentionDays(env) * 24 * 60 * 60 * 1000,

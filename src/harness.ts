@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,12 +12,16 @@ export const TEST_BOOTSTRAP_TOKEN = "test-bootstrap-token";
 type TestEnv = { DB: D1Database };
 
 const root = dirname(fileURLToPath(import.meta.url));
-const migrationSql = readFileSync(
-  join(root, "..", "migrations", "0001_init.sql"),
-  "utf8",
-);
+const migrationDirectory = join(root, "..", "migrations");
+const migrationSql = readdirSync(migrationDirectory)
+  .filter((name) => name.endsWith(".sql"))
+  .sort()
+  .map((name) => readFileSync(join(migrationDirectory, name), "utf8"))
+  .join("\n");
 
-export async function createTestVault(): Promise<{
+export async function createTestVault(
+  options: { issuanceFetch?: typeof fetch; now?: () => number } = {},
+): Promise<{
   env: TestEnv;
   crypto: VaultCrypto;
   store: VaultStore;
@@ -34,6 +38,7 @@ export async function createTestVault(): Promise<{
     app: createApp(crypto, {
       bootstrapToken: TEST_BOOTSTRAP_TOKEN,
       activeMasterKeyFingerprint: "test-master-key",
+      ...options,
     }),
     masterKey,
   };

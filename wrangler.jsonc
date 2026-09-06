@@ -16,7 +16,7 @@
     "ACTIVE_MASTER_KEY": "primary",
     "AUDIT_RETENTION_DAYS": "365"
   },
-  "triggers": { "crons": ["17 4 * * *"] },
+  "triggers": { "crons": ["*/5 * * * *"] },
   "d1_databases": [
     {
       "binding": "DB",
@@ -39,7 +39,7 @@
         "ACTIVE_MASTER_KEY": "primary",
         "AUDIT_RETENTION_DAYS": "365"
       },
-      "triggers": { "crons": ["17 4 * * *"] },
+      "triggers": { "crons": ["*/5 * * * *"] },
       "secrets_store_secrets": [
         {
           "binding": "MASTER_KEY_PRIMARY",
