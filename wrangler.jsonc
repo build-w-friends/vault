@@ -4,7 +4,9 @@
   "account_id": "00000000000000000000000000000000",
   "main": "src/worker.ts",
   "compatibility_date": "2026-08-31",
-  "compatibility_flags": ["nodejs_compat"],
+  // Node compatibility is on by default from compatibility date 2026-08-04.
+  // Lowering the date below that would silently drop the Node built-ins this
+  // Worker imports.
   "workers_dev": false,
   "preview_urls": false,
   "observability": {

@@ -8,9 +8,14 @@ export type CloudflarePushTarget = {
   token: string;
 };
 
+type CloudflareBulkEntry = { type: "secret_text"; name: string; text: string } | null;
+
 type CloudflareBulkBodyResult = {
-  secrets: Record<string, { type: "secret_text"; name: string; text: string }>;
+  secrets: Record<string, CloudflareBulkEntry>;
 };
+
+/** Creates, updates and deletes share one request's allowance. */
+const CLOUDFLARE_BULK_OPERATION_LIMIT = 100;
 
 const cloudflareSecretEntryParser = z.union([
   z.string(),
@@ -36,14 +41,42 @@ const cloudflareListingNamesParser = cloudflareListingParser
   .nullable()
   .catch(null);
 
+/**
+ * The merge-patch body. A name mapped to `null` is deleted, which is what
+ * makes a push a reconciliation rather than an accumulation.
+ *
+ * @see https://developers.cloudflare.com/changelog/post/2026-06-03-bulk-secrets-api/
+ */
 export function cloudflareBulkBody(
   values: Record<string, string>,
+  retire: readonly string[] = [],
 ): CloudflareBulkBodyResult {
-  const secrets: Record<string, { type: "secret_text"; name: string; text: string }> = {};
+  const secrets: Record<string, CloudflareBulkEntry> = {};
   for (const [name, text] of Object.entries(values)) {
     secrets[name] = { type: "secret_text", name, text };
   }
+  for (const name of retire) {
+    // A name being written wins: it is required, whatever the caller computed.
+    if (!Object.hasOwn(secrets, name)) secrets[name] = null;
+  }
   return { secrets };
+}
+
+/**
+ * Names live on the Worker that `secrets.required` no longer declares.
+ *
+ * The required list is the authority, never the vault environment's contents:
+ * an environment holds names for destinations this Worker does not have, and
+ * subtracting what the vault happens to carry would retire a required name the
+ * vault is merely missing — which `pushDestinations` already refuses by name
+ * before it gets here.
+ */
+export function cloudflareSecretsToRetire(
+  live: readonly string[],
+  required: readonly string[],
+): string[] {
+  const keep = new Set(required);
+  return live.filter((name) => !keep.has(name));
 }
 
 export const namesFromCloudflareListing = cloudflareListingNamesParser.parse.bind(
@@ -71,11 +104,15 @@ export async function pushCloudflareSecrets(
   target: CloudflarePushTarget,
   values: Record<string, string>,
   fetchImpl: FetchLike = fetch,
+  retire: readonly string[] = [],
 ): Promise<void> {
   const names = Object.keys(values);
-  if (names.length === 0) return;
-  if (names.length > 100) {
-    throw new Error("Cloudflare bulk secrets accepts at most 100 operations");
+  const operations = names.length + retire.filter((name) => !(name in values)).length;
+  if (operations === 0) return;
+  if (operations > CLOUDFLARE_BULK_OPERATION_LIMIT) {
+    throw new Error(
+      `Cloudflare bulk secrets accepts at most ${CLOUDFLARE_BULK_OPERATION_LIMIT} operations`,
+    );
   }
   const url = `https://api.cloudflare.com/client/v4/accounts/${target.accountId}/workers/scripts/${target.scriptName}/secrets-bulk`;
   const response = await fetchImpl(url, {
@@ -84,7 +121,7 @@ export async function pushCloudflareSecrets(
       Authorization: `Bearer ${target.token}`,
       "Content-Type": "application/merge-patch+json",
     },
-    body: JSON.stringify(cloudflareBulkBody(values)),
+    body: JSON.stringify(cloudflareBulkBody(values, retire)),
   });
   if (!response.ok) {
     const text = await response.text();

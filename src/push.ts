@@ -22,7 +22,9 @@
  */
 import type { VaultClient } from "./client.ts";
 import {
+  cloudflareSecretsToRetire,
   cloudflareTokenFromEnv,
+  listCloudflareSecretNames,
   pushCloudflareSecrets,
   type CloudflarePushTarget,
 } from "./push-cloudflare.ts";
@@ -40,6 +42,8 @@ import type { ProcessEnvironment } from "./types.ts";
 
 export type PushReport = {
   cloudflare: string[];
+  /** Names deleted from the Worker because `secrets.required` no longer declares them. */
+  retired: string[];
   github: string[];
   skipped: string[];
 };
@@ -82,7 +86,7 @@ export async function pushDestinations(input: {
 }): Promise<PushReport> {
   const processEnv = input.env ?? process.env;
   const fetchImpl = input.fetchImpl ?? fetch;
-  const report: PushReport = { cloudflare: [], github: [], skipped: [] };
+  const report: PushReport = { cloudflare: [], retired: [], github: [], skipped: [] };
   const filter = input.names != null ? new Set(input.names) : null;
   const required = input.wrangler?.required ?? [];
   const cloudflareNames = required.filter((name) => filter == null || filter.has(name));
@@ -92,7 +96,13 @@ export async function pushDestinations(input: {
 
   const cfToken = cloudflareTokenFromEnv(processEnv);
   const wrangler = input.wrangler;
-  if (cloudflareNames.length > 0) {
+  // A full push reconciles even with nothing to write. Entering only when
+  // there are values would mean the Worker that just retired its *last*
+  // required name never gets that name deleted, and `vault status` cannot
+  // report the leftover — the one case where the drift is total. A narrowed
+  // push still needs a name of its own, because it writes rather than
+  // reconciles.
+  if (filter == null || cloudflareNames.length > 0) {
     if (cfToken == null) report.skipped.push("cloudflare (no CLOUDFLARE_API_TOKEN)");
     else if (wrangler == null || wrangler.accountId == null || wrangler.name == null) {
       report.skipped.push("cloudflare (wrangler.jsonc missing name/account_id)");
@@ -107,8 +117,20 @@ export async function pushDestinations(input: {
       if (missing.length > 0) {
         throw new Error(`vault missing names for Cloudflare: ${missing.join(", ")}`);
       }
-      await pushCloudflareSecrets(target, values, fetchImpl);
+      // A push reconciles the Worker against `secrets.required`, so a name
+      // retired from that list is deleted rather than left live. Only a full
+      // push may do that: `--name` narrows what is written, and treating the
+      // rest as retired would delete every other secret the Worker needs.
+      const retire =
+        filter == null
+          ? cloudflareSecretsToRetire(
+              await listCloudflareSecretNames(target, fetchImpl),
+              required,
+            )
+          : [];
+      await pushCloudflareSecrets(target, values, fetchImpl, retire);
       report.cloudflare = Object.keys(values);
+      report.retired = retire;
     }
   }
 

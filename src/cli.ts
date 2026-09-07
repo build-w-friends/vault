@@ -377,10 +377,14 @@ export async function runCli(
           githubRepo,
         });
         for (const name of report.cloudflare) io.log(`cloudflare: ${name}`);
+        for (const name of report.retired) io.log(`cloudflare: ${name} (retired)`);
         for (const name of report.github) io.log(`github: ${name}`);
         for (const skip of report.skipped) io.log(`skipped ${skip}`);
         if (
-          report.cloudflare.length + report.github.length + report.skipped.length ===
+          report.cloudflare.length +
+            report.retired.length +
+            report.github.length +
+            report.skipped.length ===
           0
         ) {
           io.log("nothing to push");
