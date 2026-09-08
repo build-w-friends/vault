@@ -195,7 +195,9 @@ export async function runIssuanceCli(
     );
     const deadline = Date.now() + 600000;
     while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 5000);
+      });
       const polled = z
         .discriminatedUnion("status", [
           z.object({ status: z.literal("pending") }),
