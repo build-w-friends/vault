@@ -565,10 +565,9 @@ describe("approved issuer credentials", () => {
     );
     const rpc = (message: string) =>
       new Promise<string>((resolve, reject) => {
-        const timeout = setTimeout(
-          () => reject(new Error("stdio response timed out")),
-          3000,
-        );
+        const timeout = setTimeout(() => {
+          reject(new Error("stdio response timed out"));
+        }, 3000);
         output.once("data", (data: Buffer) => {
           clearTimeout(timeout);
           resolve(data.toString());

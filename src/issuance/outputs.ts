@@ -15,7 +15,7 @@ const outputSchema = z.object({
 // references can be injected into a later approved JSON request inside Vault.
 const secretField =
   /(?:secret|password|token|credential|authorization|private.?key|access.?key|api.?key|jwt)|^(?:value|key)$/i;
-const pointerPart = (key: string) => key.replace(/~/g, "~0").replace(/\//g, "~1");
+const pointerPart = (key: string) => key.replaceAll("~", "~0").replaceAll("/", "~1");
 function publicValue(
   value: Json,
   outputId: string,
@@ -118,7 +118,7 @@ export async function resolveSecrets(
     if (ref.pointer !== "" && !ref.pointer.startsWith("/"))
       throw new PolicyError(400, "invalid JSON pointer");
     for (const segment of ref.pointer === "" ? [] : ref.pointer.slice(1).split("/")) {
-      const key = segment.replace(/~1/g, "/").replace(/~0/g, "~");
+      const key = segment.replaceAll("~1", "/").replaceAll("~0", "~");
       if (
         resolved === null ||
         typeof resolved !== "object" ||

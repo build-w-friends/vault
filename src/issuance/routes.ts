@@ -235,9 +235,9 @@ export function issuanceRoutes(
         ),
       ),
     )
-      .replace(/=/g, "")
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_");
+      .replaceAll("=", "")
+      .replaceAll("+", "-")
+      .replaceAll("/", "_");
     const params = new URLSearchParams({
       client_id: config.clientId,
       redirect_uri: `${config.origin}/issuance/auth/callback`,

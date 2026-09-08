@@ -139,8 +139,6 @@ export class IssuanceStore {
               "UPDATE issuance_issuers SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
             )
             .bind(now, input.issuerId),
-        );
-        statements.push(
           this.db
             .prepare(`UPDATE issuance_requests SET status = CASE WHEN status IN ('prepared','approved') THEN 'declined' ELSE 'revoking' END, updated_at = ?
           WHERE issuer_id = ? AND (status IN ('prepared','approved') OR (kind = 'create-token' AND status IN ('executing','issued','unknown')))`)
@@ -152,8 +150,6 @@ export class IssuanceStore {
           this.db
             .prepare("UPDATE issuance_auth SET revoked_at = ? WHERE hash = ?")
             .bind(now, input.sessionId),
-        );
-        statements.push(
           this.db
             .prepare(`UPDATE issuance_requests SET status = CASE WHEN status IN ('prepared','approved') THEN 'declined' ELSE 'revoking' END, updated_at = ?
           WHERE auth_hash = ? AND (status IN ('prepared','approved') OR (kind = 'create-token' AND status IN ('executing','issued','unknown')))`)

@@ -216,13 +216,15 @@ export async function connectCloudflare(options: {
     const label = await required(ui, "Name your team");
     const member = await githubMember(await required(ui, "Your GitHub username: "), send);
     tenant = { id: crypto.randomUUID(), label, members: [member.subject] };
-    pending.push({ action: "tenant", id: tenant.id, label });
-    pending.push({
-      action: "member",
-      tenantId: tenant.id,
-      subject: member.subject,
-      operation: "add",
-    });
+    pending.push(
+      { action: "tenant", id: tenant.id, label },
+      {
+        action: "member",
+        tenantId: tenant.id,
+        subject: member.subject,
+        operation: "add",
+      },
+    );
     ui.say(`Create ${label} with member ${member.login}.`);
   } else tenant = tenantChoice.tenant;
 

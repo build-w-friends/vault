@@ -238,7 +238,9 @@ export async function runIssuanceCli(
     const client = new IssuanceClient(config.origin, config.token);
     await new Promise<void>((resolve) => {
       const handle = serveStdio(() => createIssuanceMcp(client), {
-        onerror: () => io.error("Vault MCP transport error"),
+        onerror: () => {
+          io.error("Vault MCP transport error");
+        },
       });
       process.stdin.once("end", () => {
         void handle.close().then(resolve);

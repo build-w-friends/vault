@@ -33,5 +33,5 @@ export function stripJsonComments(text: string): string {
     }
     out += character;
   }
-  return out.replace(/,(\s*[}\]])/gu, "$1");
+  return out.replaceAll(/,(\s*[}\]])/gu, "$1");
 }

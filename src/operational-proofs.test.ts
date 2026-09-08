@@ -40,21 +40,21 @@ describe("operational proof parsers", () => {
   });
 
   test("rejects GitHub's HTTP-200 invalid redirect page", () => {
-    expect(() =>
+    expect(() => {
       assertGitHubAuthorizationPage({
         status: 200,
         body: "<title>Invalid Redirect URI</title>",
-      }),
-    ).toThrow(/rejected/u);
+      });
+    }).toThrow(/rejected/u);
   });
 
   test("accepts a recognized GitHub authorization page", () => {
-    expect(() =>
+    expect(() => {
       assertGitHubAuthorizationPage({
         status: 200,
         body: "<title>Authorize Build With Friends</title>",
-      }),
-    ).not.toThrow();
+      });
+    }).not.toThrow();
   });
 
   test("extracts only the opaque Sentry diagnostic id", () => {

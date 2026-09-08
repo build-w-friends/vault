@@ -19,12 +19,20 @@ export function terminalPrompts(): ConnectPrompts {
       "Guided setup needs an interactive terminal. Run vault issuance setup or vault issuance connect cloudflare there, or use vault issuance admin for scripted JSON input.",
     );
   const streams = { input: process.stdin, output: process.stderr };
-  const say = (message: string) => prompts.log.info(message, streams);
+  const say = (message: string) => {
+    prompts.log.info(message, streams);
+  };
   return {
     say,
-    intro: (message) => prompts.intro(message, streams),
-    outro: (message) => prompts.outro(message, streams),
-    cancel: (message) => prompts.cancel(message, streams),
+    intro: (message) => {
+      prompts.intro(message, streams);
+    },
+    outro: (message) => {
+      prompts.outro(message, streams);
+    },
+    cancel: (message) => {
+      prompts.cancel(message, streams);
+    },
     async ask(message, validate) {
       return answer(
         await prompts.text({
@@ -76,8 +84,12 @@ export function terminalPrompts(): ConnectPrompts {
             : "xdg-open";
       const opened = await new Promise<boolean>((resolve) => {
         const child = spawn(command, [url], { stdio: "ignore" });
-        child.on("error", () => resolve(false));
-        child.on("exit", (code) => resolve(code === 0));
+        child.on("error", () => {
+          resolve(false);
+        });
+        child.on("exit", (code) => {
+          resolve(code === 0);
+        });
       });
       if (!opened) say("The browser could not be opened. Open the printed URL manually.");
     },

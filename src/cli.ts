@@ -693,8 +693,12 @@ function spawnCommand(argv: string[], env: ProcessEnvironment): Promise<number> 
       env: env as NodeJS.ProcessEnv,
       stdio: "inherit",
     });
-    child.on("exit", (code) => finish(code ?? 1));
-    child.on("error", () => finish(1));
+    child.on("exit", (code) => {
+      finish(code ?? 1);
+    });
+    child.on("error", () => {
+      finish(1);
+    });
   });
 }
 
