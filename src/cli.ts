@@ -245,10 +245,9 @@ function parseScopes(values: string[]): Scope[] {
   });
 }
 
-export async function runCli(
-  argv: string[],
-  io = { log: console.log, error: console.error },
-): Promise<number> {
+const DEFAULT_CLI_IO = { log: console.log, error: console.error };
+
+export async function runCli(argv: string[], io = DEFAULT_CLI_IO): Promise<number> {
   try {
     const { command, flags } = parseArgv(argv);
     switch (command) {
@@ -328,26 +327,26 @@ export async function runCli(
         return statusFails(report) ? 1 : 0;
       }
       case "projects":
-        return runProjects(flags, io);
+        return await runProjects(flags, io);
       case "environments":
       case "envs":
-        return runEnvironments(flags, io);
+        return await runEnvironments(flags, io);
       case "ls":
       case "list":
         flags.rest.unshift("list");
-        return runSecrets(flags, io);
+        return await runSecrets(flags, io);
       case "get":
         flags.rest.unshift("get");
-        return runSecrets(flags, io);
+        return await runSecrets(flags, io);
       case "set":
         flags.rest.unshift("set");
-        return runSecrets(flags, io);
+        return await runSecrets(flags, io);
       case "secrets":
-        return runSecrets(flags, io);
+        return await runSecrets(flags, io);
       case "keys":
-        return runKeys(flags, io);
+        return await runKeys(flags, io);
       case "routes":
-        return runRoutes(flags, io);
+        return await runRoutes(flags, io);
       case "audit": {
         const page = await session(flags).client.listAudit(
           flags.limit ?? 50,
@@ -358,7 +357,7 @@ export async function runCli(
         return 0;
       }
       case "master-keys":
-        return runMasterKeys(flags, io);
+        return await runMasterKeys(flags, io);
       case "push": {
         const { client, repo, project, env, githubRepo, wranglerEnvironment } =
           session(flags);

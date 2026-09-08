@@ -2,14 +2,16 @@ import * as prompts from "@clack/prompts";
 import { spawn } from "node:child_process";
 import type { ConnectPrompts } from "./connect-cloudflare.ts";
 
-export class PromptCancelled extends Error {
+export class PromptCancelledError extends Error {
+  override readonly name = "PromptCancelledError";
+
   constructor() {
     super("Setup cancelled. Credentials already created at the provider still exist.");
   }
 }
 
 function answer<T>(value: T | symbol): T {
-  if (prompts.isCancel(value)) throw new PromptCancelled();
+  if (prompts.isCancel(value)) throw new PromptCancelledError();
   return value;
 }
 

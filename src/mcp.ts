@@ -177,7 +177,7 @@ export async function handleMcp(
   const rawArgs = callParams.output.arguments ?? {};
   try {
     if (name === "mint_proxy_help") {
-      return result({
+      return await result({
         content: [
           {
             type: "text",
@@ -200,7 +200,7 @@ export async function handleMcp(
     if (name === "list_secrets") {
       const secrets = await store.listSecretMeta(environmentId);
       await store.audit({ keyPrefix: key.keyPrefix, action: "list", status: "ok" });
-      return result({ content: [{ type: "text", text: JSON.stringify(secrets) }] });
+      return await result({ content: [{ type: "text", text: JSON.stringify(secrets) }] });
     }
     if (name === "list_routes") {
       const routes = await store.listRoutes(environmentId);
@@ -209,7 +209,7 @@ export async function handleMcp(
         action: "route_list",
         status: "ok",
       });
-      return result({
+      return await result({
         content: [
           {
             type: "text",
@@ -231,7 +231,7 @@ export async function handleMcp(
         status: "ok",
         secretName,
       });
-      return result({
+      return await result({
         content: [{ type: "text", text: `created sealed secret ${secretName}` }],
       });
     }

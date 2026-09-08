@@ -7,7 +7,7 @@ import { resolveClientOptions } from "../config.ts";
 import { parseVaultApiUrl } from "../client.ts";
 import { readSecretValue } from "../prompt.ts";
 import { connectCloudflare, setupIssuance, setupSchema } from "./connect-cloudflare.ts";
-import { PromptCancelled, terminalPrompts } from "./terminal.ts";
+import { PromptCancelledError, terminalPrompts } from "./terminal.ts";
 import { retryDevicePoll, TemporaryConnectionError } from "./device-poll.ts";
 import { issuanceHelp } from "./help.ts";
 import { adminSchema, id } from "./contracts.ts";
@@ -122,7 +122,7 @@ export async function runIssuanceCli(
       if (command === "setup") await setupIssuance({ ui, setup, origin, save });
       else await connectCloudflare({ ui, setup, save });
     } catch (error) {
-      if (!(error instanceof PromptCancelled)) throw error;
+      if (!(error instanceof PromptCancelledError)) throw error;
       ui.cancel(error.message);
       return 130;
     }

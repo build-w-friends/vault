@@ -134,11 +134,11 @@ export async function resolveSecrets(
         );
       resolved = object[key] ?? null;
     }
-    function remember(entry: Json) {
+    const remember = (entry: Json): void => {
       if (typeof entry === "string" && entry.length > 0) secrets.add(entry);
       else if (entry !== null && typeof entry === "object")
         for (const child of Object.values(entry)) remember(child);
-    }
+    };
     remember(resolved);
     return resolved;
   }
