@@ -46,6 +46,7 @@ import { genericRoute, routePreset } from "./presets.ts";
 import type {
   ApiKeyMeta,
   ApiKeyRecord,
+  AuditAction,
   KeyMode,
   Permission,
   SecretKind,
@@ -314,11 +315,10 @@ export function createApp(
     const show = c.req.query("show") === "1";
     const exporting = c.req.query("export") === "1";
     if (show || exporting) assertCanDecrypt(key);
-    await store.audit({
-      keyPrefix: key.keyPrefix,
-      action: exporting ? "inject" : show ? "get" : "list",
-      status: "ok",
-    });
+    let action: AuditAction = "list";
+    if (exporting) action = "inject";
+    else if (show) action = "get";
+    await store.audit({ keyPrefix: key.keyPrefix, action, status: "ok" });
     if (!show && !exporting) {
       return c.json({ secrets: await store.listSecretMeta(environmentId) });
     }

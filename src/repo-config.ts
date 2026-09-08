@@ -135,12 +135,13 @@ export function loadRepoContext(cwd: string): RepoContext {
       JSON.parse(stripJsonComments(readFileSync(vaultJsonPath, "utf8"))),
     );
   }
-  const wranglerPath =
-    vault.wrangler != null
-      ? isAbsolute(vault.wrangler)
-        ? vault.wrangler
-        : resolve(root, vault.wrangler)
-      : findUp(cwd, ["wrangler.jsonc", "wrangler.json"]);
+  let wranglerPath: string | null;
+  if (vault.wrangler == null)
+    wranglerPath = findUp(cwd, ["wrangler.jsonc", "wrangler.json"]);
+  else
+    wranglerPath = isAbsolute(vault.wrangler)
+      ? vault.wrangler
+      : resolve(root, vault.wrangler);
   return {
     root,
     vaultJsonPath,

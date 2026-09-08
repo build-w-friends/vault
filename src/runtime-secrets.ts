@@ -20,11 +20,10 @@ export async function readRuntimeSecret(
   binding: SecretsStoreSecret | string | undefined,
   name: string,
 ): Promise<string> {
-  const value = v.is(v.string(), binding)
-    ? binding
-    : binding == null
-      ? undefined
-      : await binding.get();
+  // A plain string is the value itself; a binding has to be read.
+  let value: string | undefined;
+  if (v.is(v.string(), binding)) value = binding;
+  else if (binding != null) value = await binding.get();
   if (value == null || value.length === 0) {
     throw new MasterKeyError(`${name} is required`);
   }

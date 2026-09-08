@@ -155,16 +155,16 @@ export class IssuanceStore {
         );
         break;
     }
-    const action =
-      input.action === "member"
-        ? `${input.action}:${input.operation}:${input.tenantId}:${input.subject}`
-        : input.action === "issuer" || input.action === "tenant"
-          ? `${input.action}:${input.id}`
-          : input.action === "revoke-issuer"
-            ? `${input.action}:${input.issuerId}`
-            : input.action === "revoke-session"
-              ? `${input.action}:${input.sessionId}`
-              : input.action;
+    // Each action names the record it touched, so the audit row identifies it.
+    let action: string = input.action;
+    if (input.action === "member")
+      action = `${input.action}:${input.operation}:${input.tenantId}:${input.subject}`;
+    else if (input.action === "issuer" || input.action === "tenant")
+      action = `${input.action}:${input.id}`;
+    else if (input.action === "revoke-issuer")
+      action = `${input.action}:${input.issuerId}`;
+    else if (input.action === "revoke-session")
+      action = `${input.action}:${input.sessionId}`;
     statements.push(this.event(null, actor, action));
     await this.db.batch(statements);
   }

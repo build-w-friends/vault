@@ -13,6 +13,12 @@ function answer<T>(value: T | symbol): T {
   return value;
 }
 
+/** How each platform opens a URL; everything else uses the freedesktop tool. */
+const BROWSER_OPENERS: Partial<Record<NodeJS.Platform, string>> = {
+  darwin: "open",
+  win32: "explorer.exe",
+};
+
 export function terminalPrompts(): ConnectPrompts {
   if (!process.stdin.isTTY)
     throw new Error(
@@ -76,12 +82,7 @@ export function terminalPrompts(): ConnectPrompts {
       return answer(await prompts.confirm({ ...streams, message, initialValue: false }));
     },
     async open(url) {
-      const command =
-        process.platform === "darwin"
-          ? "open"
-          : process.platform === "win32"
-            ? "explorer.exe"
-            : "xdg-open";
+      const command = BROWSER_OPENERS[process.platform] ?? "xdg-open";
       const opened = await new Promise<boolean>((resolve) => {
         const child = spawn(command, [url], { stdio: "ignore" });
         child.on("error", () => {
