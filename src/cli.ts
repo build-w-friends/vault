@@ -747,5 +747,7 @@ Documentation: https://vault.buildwithfriends.dev/reference/cli/`;
 }
 
 if (import.meta.main) {
-  void runCli(process.argv.slice(2)).then((code) => process.exit(code));
+  void (async () => {
+    process.exit(await runCli(process.argv.slice(2)));
+  })();
 }
