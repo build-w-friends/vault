@@ -114,7 +114,8 @@ export class VaultStore {
     scopes: Scope[] | null;
     expiresAt: string;
   }): Promise<void> {
-    await (await this.prepareInsertKey(input)).run();
+    const insertKey = await this.prepareInsertKey(input);
+    await insertKey.run();
   }
 
   async claimBootstrapKey(input: {

@@ -14,7 +14,7 @@ const outputSchema = z.object({
 // Cloudflare credential responses use these names. Values remain encrypted;
 // references can be injected into a later approved JSON request inside Vault.
 const secretField =
-  /(?:secret|password|token|credential|authorization|private.?key|access.?key|api.?key|jwt)|^(?:value|key)$/i;
+  /(?:secret|password|token|credential|authorization|private.?key|access.?key|api.?key|jwt)|^(?:value|key)$/iu;
 const pointerPart = (key: string) => key.replaceAll("~", "~0").replaceAll("/", "~1");
 function publicValue(
   value: Json,

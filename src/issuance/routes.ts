@@ -33,16 +33,16 @@ const nonce = () =>
   Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) =>
     b.toString(16).padStart(2, "0"),
   ).join("");
-const localPath = z.string().regex(/^\/issuance\/(?:connect|approve)\/[a-f0-9-]{36}$/);
+const localPath = z.string().regex(/^\/issuance\/(?:connect|approve)\/[a-f0-9-]{36}$/u);
 
 const deviceSchema = z
   .object({
-    challenge: z.string().regex(/^[a-f0-9]{64}$/),
+    challenge: z.string().regex(/^[a-f0-9]{64}$/u),
     label: z.string().trim().min(1).max(120),
   })
   .strict();
 const pollSchema = z
-  .object({ deviceId: id, verifier: z.string().regex(/^[a-f0-9]{64}$/) })
+  .object({ deviceId: id, verifier: z.string().regex(/^[a-f0-9]{64}$/u) })
   .strict();
 type Device = {
   id: string;
@@ -177,12 +177,13 @@ export function issuanceRoutes(
   const agent = (c: Context<Environment>) =>
     c
       .get("issuance")
-      .auth(c.req.header("Authorization")?.replace(/^Bearer /, ""), "agent");
+      .auth(c.req.header("Authorization")?.replace(/^Bearer /u, ""), "agent");
   async function browser(c: Context<Environment>): Promise<Auth> {
     return c.get("issuance").auth(getCookie(c, browserCookie), "browser");
   }
   async function form(c: Context<Environment>, auth: Auth) {
-    const origin = (await c.get("issuance").identity()).origin;
+    const identity = await c.get("issuance").identity();
+    const origin = identity.origin;
     if (c.req.header("Origin") !== origin)
       throw new PolicyError(403, "approval must come from the Vault page");
     const input = await c.req.parseBody();
@@ -250,7 +251,7 @@ export function issuanceRoutes(
   app.get("/auth/callback", async (c) => {
     const state = z
       .string()
-      .regex(/^[a-f0-9]{64}$/)
+      .regex(/^[a-f0-9]{64}$/u)
       .parse(c.req.query("state"));
     const cookie = getCookie(c, stateCookie);
     if (!cookie || !(await timingSafeStringEqual(cookie, state)))

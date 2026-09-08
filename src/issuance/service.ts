@@ -291,22 +291,20 @@ export class IssuanceService {
   }
   async reconcile() {
     const now = this.store.now();
-    const stalled = (
-      await this.store.db
-        .prepare(
-          "SELECT * FROM issuance_requests WHERE status = 'executing' AND updated_at < ? LIMIT 200",
-        )
-        .bind(now - 60000)
-        .all<IssuanceRequest>()
-    ).results;
+    const stalledRows = await this.store.db
+      .prepare(
+        "SELECT * FROM issuance_requests WHERE status = 'executing' AND updated_at < ? LIMIT 200",
+      )
+      .bind(now - 60000)
+      .all<IssuanceRequest>();
+    const stalled = stalledRows.results;
     for (const row of stalled) await this.store.transition(row, "executing", "unknown");
-    const rows = (
-      await this.store.db
-        .prepare(
-          "SELECT * FROM issuance_requests WHERE (status IN ('prepared','approved','issued','revoking') OR (kind = 'create-token' AND status = 'unknown')) ORDER BY updated_at LIMIT 200",
-        )
-        .all<IssuanceRequest>()
-    ).results;
+    const pendingRows = await this.store.db
+      .prepare(
+        "SELECT * FROM issuance_requests WHERE (status IN ('prepared','approved','issued','revoking') OR (kind = 'create-token' AND status = 'unknown')) ORDER BY updated_at LIMIT 200",
+      )
+      .all<IssuanceRequest>();
+    const rows = pendingRows.results;
     for (const row of rows) {
       try {
         await this.cleanup(row);

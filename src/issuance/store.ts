@@ -26,16 +26,14 @@ export class IssuanceStore {
     readonly now = () => Date.now(),
   ) {}
   async setup() {
-    const tenants = (
-      await this.db
-        .prepare("SELECT id, label FROM issuance_tenants ORDER BY label, id")
-        .all<{ id: string; label: string }>()
-    ).results;
-    const members = (
-      await this.db
-        .prepare("SELECT tenant_id, subject FROM issuance_members ORDER BY subject")
-        .all<{ tenant_id: string; subject: string }>()
-    ).results;
+    const tenantRows = await this.db
+      .prepare("SELECT id, label FROM issuance_tenants ORDER BY label, id")
+      .all<{ id: string; label: string }>();
+    const tenants = tenantRows.results;
+    const memberRows = await this.db
+      .prepare("SELECT tenant_id, subject FROM issuance_members ORDER BY subject")
+      .all<{ tenant_id: string; subject: string }>();
+    const members = memberRows.results;
     const identity = await this.db
       .prepare("SELECT id FROM issuance_identity WHERE id = 1")
       .first();
@@ -191,24 +189,22 @@ export class IssuanceStore {
     return row;
   }
   async membersTenants(subject: string) {
-    return (
-      await this.db
-        .prepare(
-          "SELECT t.id, t.label FROM issuance_tenants t JOIN issuance_members m ON m.tenant_id = t.id WHERE m.subject = ? ORDER BY t.label",
-        )
-        .bind(subject)
-        .all<{ id: string; label: string }>()
-    ).results;
+    const tenantRows = await this.db
+      .prepare(
+        "SELECT t.id, t.label FROM issuance_tenants t JOIN issuance_members m ON m.tenant_id = t.id WHERE m.subject = ? ORDER BY t.label",
+      )
+      .bind(subject)
+      .all<{ id: string; label: string }>();
+    return tenantRows.results;
   }
   async issuers(auth: Auth) {
-    const rows = (
-      await this.db
-        .prepare(
-          `SELECT i.* FROM issuance_issuers i WHERE i.tenant_id = ? AND ${eligibleSql} ORDER BY i.id`,
-        )
-        .bind(auth.tenant_id, auth.subject, auth.subject)
-        .all<Issuer>()
-    ).results;
+    const issuerRows = await this.db
+      .prepare(
+        `SELECT i.* FROM issuance_issuers i WHERE i.tenant_id = ? AND ${eligibleSql} ORDER BY i.id`,
+      )
+      .bind(auth.tenant_id, auth.subject, auth.subject)
+      .all<Issuer>();
+    const rows = issuerRows.results;
     return Promise.all(
       rows.map(async (row) => ({
         id: row.id,

@@ -15,7 +15,7 @@ import { createIssuanceMcp, IssuanceClient } from "./mcp.ts";
 
 const configSchema = z.object({
   origin: z.string().url(),
-  token: z.string().regex(/^[a-f0-9]{64}$/),
+  token: z.string().regex(/^[a-f0-9]{64}$/u),
   expiresAt: z.string().datetime(),
   sessionId: z.string(),
 });

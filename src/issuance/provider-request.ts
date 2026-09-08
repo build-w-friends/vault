@@ -47,7 +47,7 @@ export function assertTokenScope(
 }
 
 export function isTokenManagement(request: ApiRequest) {
-  return /^\/accounts\/[a-f0-9]{32}\/tokens(?:\/|$)/.test(request.path);
+  return /^\/accounts\/[a-f0-9]{32}\/tokens(?:\/|$)/u.test(request.path);
 }
 
 export async function providerRequest(
@@ -105,7 +105,8 @@ export async function providerRequest(
       }
       parts.push(part.value);
     }
-  const text = (await new Blob(parts).text()).split(token).join("[REDACTED]");
+  const collected = await new Blob(parts).text();
+  const text = collected.split(token).join("[REDACTED]");
   let value: z.infer<ReturnType<typeof z.json>>;
   try {
     value = z.json().parse(JSON.parse(text));

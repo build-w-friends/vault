@@ -37,7 +37,7 @@ export function terminalPrompts(): ConnectPrompts {
       return answer(
         await prompts.text({
           ...streams,
-          message: message.trim().replace(/:$/, ""),
+          message: message.trim().replace(/:$/u, ""),
           validate: (value) => validate?.(value ?? ""),
         }),
       );
@@ -46,7 +46,7 @@ export function terminalPrompts(): ConnectPrompts {
       return answer(
         await prompts.password({
           ...streams,
-          message: message.trim().replace(/:$/, ""),
+          message: message.trim().replace(/:$/u, ""),
           validate: (value) => (value?.trim() ? undefined : "Enter a credential."),
         }),
       );

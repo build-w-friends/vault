@@ -133,7 +133,7 @@ export class CloudflareDiscovery {
     const names = parsed.data.policies
       .filter((p) => p.effect === "allow")
       .flatMap((p) => p.permission_groups.map((g) => g.name));
-    if (!names.some((name) => /^Account API Tokens (Write|Edit)$/.test(name)))
+    if (!names.some((name) => /^Account API Tokens (Write|Edit)$/u.test(name)))
       throw new Error(
         "This token needs Account API Tokens Edit to create managed tokens.",
       );
@@ -158,17 +158,16 @@ async function choose<T>(
   return ui.select(label, entries, name);
 }
 async function required(ui: ConnectPrompts, label: string) {
-  return (
-    await ui.ask(label, (value) => {
-      const length = value.trim().length;
-      return length > 0 && length <= 120
-        ? undefined
-        : "Enter between 1 and 120 characters.";
-    })
-  ).trim();
+  const answer = await ui.ask(label, (value) => {
+    const length = value.trim().length;
+    return length > 0 && length <= 120
+      ? undefined
+      : "Enter between 1 and 120 characters.";
+  });
+  return answer.trim();
 }
 async function githubMember(login: string, send: typeof fetch) {
-  if (!/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/.test(login))
+  if (!/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/u.test(login))
     throw new Error("Enter a GitHub username, not a URL or ID.");
   const response = await send(`https://api.github.com/users/${login}`, {
     headers: { Accept: "application/vnd.github+json", "User-Agent": "Vault-CLI" },
@@ -234,8 +233,9 @@ export async function connectCloudflare(options: {
   const url = cloudflareTokenTemplate();
   ui.say(url);
   if (await ui.confirm("Open Cloudflare in your browser?")) await ui.open(url);
-  const parentToken = (await ui.secret("Cloudflare token (hidden): ")).trim();
-  if (!parentToken || /\s/.test(parentToken))
+  const parentAnswer = await ui.secret("Cloudflare token (hidden): ");
+  const parentToken = parentAnswer.trim();
+  if (!parentToken || /\s/u.test(parentToken))
     throw new Error("Enter only the Cloudflare token in the hidden prompt.");
   const provider = new CloudflareDiscovery(parentToken, send);
   const account = await choose(
@@ -254,9 +254,12 @@ export async function connectCloudflare(options: {
     ui.say(
       "Account services remain available. Choose which discovered domains may also be used through zone API paths.",
     );
-    zoneIds = (
-      await ui.multiselect("Allow access to these domains", zones, (zone) => zone.name)
-    ).map((zone) => zone.id);
+    const selectedZones = await ui.multiselect(
+      "Allow access to these domains",
+      zones,
+      (zone) => zone.name,
+    );
+    zoneIds = selectedZones.map((zone) => zone.id);
   } else ui.say("No zones are visible to this token. Account services remain available.");
 
   const sharing = await choose(
@@ -267,9 +270,8 @@ export async function connectCloudflare(options: {
   );
   let audience: "tenant" | string[] = "tenant";
   if (sharing === "Selected current members") {
-    const logins = (await required(ui, "GitHub usernames, separated by commas: "))
-      .split(",")
-      .map((value) => value.trim());
+    const loginAnswer = await required(ui, "GitHub usernames, separated by commas: ");
+    const logins = loginAnswer.split(",").map((value) => value.trim());
     audience = [];
     for (const login of logins) {
       const user = await githubMember(login, send);

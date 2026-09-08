@@ -186,13 +186,12 @@ export function createApp(
       throw new PolicyError(403, "only operators inspect issuer requests");
     const store = new IssuanceStore(c.env.DB, vaultCrypto);
     const request = await store.request(issuanceId.parse(c.req.param("id")));
-    const events = (
-      await c.env.DB.prepare(
-        "SELECT actor, action, created_at FROM issuance_events WHERE request_id = ? ORDER BY created_at, rowid",
-      )
-        .bind(request.id)
-        .all<{ actor: string; action: string; created_at: number }>()
-    ).results;
+    const eventRows = await c.env.DB.prepare(
+      "SELECT actor, action, created_at FROM issuance_events WHERE request_id = ? ORDER BY created_at, rowid",
+    )
+      .bind(request.id)
+      .all<{ actor: string; action: string; created_at: number }>();
+    const events = eventRows.results;
     return c.json({
       ...(await new IssuanceService(store).view(request)),
       subject: request.subject,

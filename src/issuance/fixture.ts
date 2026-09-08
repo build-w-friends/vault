@@ -202,7 +202,7 @@ export async function issuanceFixture() {
   async function csrf(path: string, cookie: string) {
     const response = await request(path, { headers: { Cookie: cookie } });
     const text = await response.text();
-    const token = /name="csrf" value="([^"]+)"/.exec(text)?.[1];
+    const token = /name="csrf" value="([^"]+)"/u.exec(text)?.[1];
     if (!token) throw new Error(`fixture approval form absent: ${response.status}`);
     return token;
   }

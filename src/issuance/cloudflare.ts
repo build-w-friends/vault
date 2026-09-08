@@ -1,7 +1,7 @@
 import * as v from "valibot";
 import type { Plan } from "./contracts.ts";
 
-const cloudflareIdSchema = v.pipe(v.string(), v.regex(/^[a-f0-9]{32}$/));
+const cloudflareIdSchema = v.pipe(v.string(), v.regex(/^[a-f0-9]{32}$/u));
 const policySchema = v.looseObject({
   effect: v.picklist(["allow", "deny"]),
   permission_groups: v.array(v.looseObject({ id: cloudflareIdSchema })),

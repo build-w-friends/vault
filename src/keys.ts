@@ -30,6 +30,6 @@ export function randomSecretValue(bytes = 32): string {
 
 export function bearerFrom(header: string | undefined): string | null {
   if (header == null) return null;
-  const match = /^Bearer\s+(\S+)$/i.exec(header.trim());
+  const match = /^Bearer\s+(\S+)$/iu.exec(header.trim());
   return match?.[1] ?? null;
 }

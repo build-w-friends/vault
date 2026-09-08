@@ -265,7 +265,7 @@ export function describeWranglerEnvironment(
 }
 
 export function githubOwnerRepo(spec: string): { owner: string; repo: string } | null {
-  const match = /^([^/]+)\/([^/]+)$/.exec(spec.trim());
+  const match = /^([^/]+)\/([^/]+)$/u.exec(spec.trim());
   if (match == null || match[1] == null || match[2] == null) return null;
   return { owner: match[1], repo: match[2] };
 }

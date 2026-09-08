@@ -464,13 +464,15 @@ async function runProjects(flags: Flags, io: { log: (value: string) => void }) {
   const sub = flags.rest[0] ?? "list";
   const client = session(flags).client;
   if (sub === "list") {
-    for (const name of (await client.listProjects()).projects) io.log(name);
+    const projects = await client.listProjects();
+    for (const name of projects.projects) io.log(name);
     return 0;
   }
   const name = flags.rest[1];
   if (name == null) throw new Error(`usage: vault projects ${sub} NAME`);
   if (sub === "create") {
-    io.log((await client.createProject(name)).name);
+    const created = await client.createProject(name);
+    io.log(created.name);
     return 0;
   }
   if (sub === "delete") {
@@ -486,14 +488,15 @@ async function runEnvironments(flags: Flags, io: { log: (value: string) => void 
   const sub = flags.rest[0] ?? "list";
   const { client, project } = session(flags);
   if (sub === "list") {
-    for (const name of (await client.listEnvironments(project)).environments)
-      io.log(name);
+    const environments = await client.listEnvironments(project);
+    for (const name of environments.environments) io.log(name);
     return 0;
   }
   const name = flags.rest[1];
   if (name == null) throw new Error(`usage: vault environments ${sub} NAME`);
   if (sub === "create") {
-    io.log((await client.createEnvironment(project, name)).name);
+    const createdEnvironment = await client.createEnvironment(project, name);
+    io.log(createdEnvironment.name);
     return 0;
   }
   if (sub === "delete") {
@@ -509,7 +512,8 @@ async function runSecrets(flags: Flags, io: { log: (value: string) => void }) {
   const sub = flags.rest[0] ?? "list";
   const { client, project, env } = session(flags);
   if (sub === "list") {
-    for (const secret of (await client.listSecretMeta(project, env)).secrets) {
+    const meta = await client.listSecretMeta(project, env);
+    for (const secret of meta.secrets) {
       io.log(`${secret.name}\t${secret.kind}`);
     }
     return 0;
@@ -520,7 +524,8 @@ async function runSecrets(flags: Flags, io: { log: (value: string) => void }) {
     throw new Error("inline secret values are not accepted; use hidden input or stdin");
   }
   if (sub === "get") {
-    io.log((await client.getSecret(project, env, name)).value);
+    const secret = await client.getSecret(project, env, name);
+    io.log(secret.value);
     return 0;
   }
   if (sub === "set") {
@@ -553,8 +558,8 @@ async function runKeys(flags: Flags, io: { log: (value: string) => void }) {
   const sub = flags.rest[0] ?? "list";
   const client = session(flags).client;
   if (sub === "list") {
-    for (const key of (await client.listKeys(flags.includeRevoked)).keys)
-      io.log(JSON.stringify(key));
+    const keyList = await client.listKeys(flags.includeRevoked);
+    for (const key of keyList.keys) io.log(JSON.stringify(key));
     return 0;
   }
   if (sub === "create") {
@@ -600,8 +605,8 @@ async function runRoutes(flags: Flags, io: { log: (value: string) => void }) {
   const sub = flags.rest[0] ?? "list";
   const { client, project, env } = session(flags);
   if (sub === "list") {
-    for (const route of (await client.listRoutes(project, env)).routes)
-      io.log(JSON.stringify(route));
+    const routeList = await client.listRoutes(project, env);
+    for (const route of routeList.routes) io.log(JSON.stringify(route));
     return 0;
   }
   if (sub === "put") {
@@ -630,7 +635,8 @@ async function runMasterKeys(flags: Flags, io: { log: (value: string) => void })
     return 0;
   }
   if (sub === "prepare") {
-    io.log(`prepared ${(await client.prepareMasterKey()).fingerprint}`);
+    const prepared = await client.prepareMasterKey();
+    io.log(`prepared ${prepared.fingerprint}`);
     return 0;
   }
   if (sub === "retire") {
@@ -674,7 +680,8 @@ async function runProxied(flags: Flags): Promise<number> {
     kind: secret.kind,
     value: secret.value ?? "",
   }));
-  const routes = (await client.listRoutes(project, env)).routes;
+  const routeList = await client.listRoutes(project, env);
+  const routes = routeList.routes;
   const handle = await startProxy({ secrets, routes });
   try {
     return await spawnCommand(flags.rest, proxyChildEnv(handle, process.env));

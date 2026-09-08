@@ -1,8 +1,8 @@
 import { z } from "zod";
 
 export const id = z.string().uuid();
-export const subject = z.string().regex(/^[1-9][0-9]{0,19}$/);
-export const cfId = z.string().regex(/^[a-f0-9]{32}$/);
+export const subject = z.string().regex(/^[1-9][0-9]{0,19}$/u);
+export const cfId = z.string().regex(/^[a-f0-9]{32}$/u);
 export const secretReferenceSchema = z
   .object({
     $vaultSecret: z.object({ outputId: id, pointer: z.string().max(2000) }).strict(),
@@ -16,7 +16,7 @@ export const apiRequestSchema = z
     method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
     path: z
       .string()
-      .regex(/^\/(?:accounts|zones|v1)\/[a-f0-9]{32}(?:\/[a-zA-Z0-9_@.:-]+)*$/)
+      .regex(/^\/(?:accounts|zones|v1)\/[a-f0-9]{32}(?:\/[a-zA-Z0-9_@.:-]+)*$/u)
       .max(2000)
       .refine(
         (value) => !value.split("/").some((part) => part === "." || part === ".."),
@@ -37,7 +37,7 @@ export const apiRequestSchema = z
                     name: z.string().min(1).max(200),
                     content: z.string().max(800000),
                     filename: z.string().min(1).max(200),
-                    contentType: z.string().regex(/^[a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+$/),
+                    contentType: z.string().regex(/^[a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+$/u),
                   })
                   .strict(),
               )
@@ -145,7 +145,7 @@ export const adminSchema = z.discriminatedUnion("action", [
   z
     .object({
       action: z.literal("revoke-session"),
-      sessionId: z.string().regex(/^[a-f0-9]{64}$/),
+      sessionId: z.string().regex(/^[a-f0-9]{64}$/u),
     })
     .strict(),
 ]);
@@ -242,7 +242,7 @@ export const issuanceResponseSchema = z.union([
 ]);
 export type IssuanceResponse = z.infer<typeof issuanceResponseSchema>;
 export const loginStateSchema = z.object({
-  returnTo: z.string().regex(/^\/issuance\/(?:connect|approve)\/[a-f0-9-]{36}$/),
+  returnTo: z.string().regex(/^\/issuance\/(?:connect|approve)\/[a-f0-9-]{36}$/u),
   verifier: z.string(),
   configHash: z.string(),
 });

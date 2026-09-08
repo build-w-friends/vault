@@ -48,21 +48,15 @@ export async function collectStatus(input: {
   const fetchImpl = input.fetchImpl ?? fetch;
   const wrangler = input.wrangler;
   const required = wrangler?.required ?? [];
-  const vaultNames = new Set(
-    (await input.client.listSecretMeta(input.project, input.env)).secrets.map(
-      (secret) => secret.name,
-    ),
-  );
+  const vaultMeta = await input.client.listSecretMeta(input.project, input.env);
+  const vaultNames = new Set(vaultMeta.secrets.map((secret) => secret.name));
   const github = input.repo.vault.github;
   const githubSourceEnv = github?.env ?? input.env;
-  const githubSourceNames =
-    github == null || githubSourceEnv === input.env
-      ? vaultNames
-      : new Set(
-          (await input.client.listSecretMeta(input.project, githubSourceEnv)).secrets.map(
-            (secret) => secret.name,
-          ),
-        );
+  let githubSourceNames = vaultNames;
+  if (github != null && githubSourceEnv !== input.env) {
+    const githubMeta = await input.client.listSecretMeta(input.project, githubSourceEnv);
+    githubSourceNames = new Set(githubMeta.secrets.map((secret) => secret.name));
+  }
   const vaultMissing = [
     ...new Set([
       ...missingNames(required, [...vaultNames]),
