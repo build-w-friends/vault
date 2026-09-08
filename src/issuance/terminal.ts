@@ -1,4 +1,5 @@
 import * as prompts from "@clack/prompts";
+import * as v from "valibot";
 import { spawn } from "node:child_process";
 import type { ConnectPrompts } from "./connect-cloudflare.ts";
 
@@ -11,7 +12,7 @@ export class PromptCancelledError extends Error {
 }
 
 function answer<T>(value: T | symbol): T {
-  if (prompts.isCancel(value)) throw new PromptCancelledError();
+  if (v.is(v.symbol(), value)) throw new PromptCancelledError();
   return value;
 }
 
