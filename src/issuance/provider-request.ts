@@ -91,6 +91,10 @@ export async function providerRequest(
     await response.body?.cancel();
     throw new Error("Provider redirects are not allowed");
   }
+  return readProviderResponse(response, token);
+}
+
+export async function readProviderResponse(response: Response, token: string) {
   const reader = response.body?.getReader();
   const parts: Uint8Array[] = [];
   let size = 0;

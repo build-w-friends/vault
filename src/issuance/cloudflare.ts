@@ -1,5 +1,6 @@
 import * as v from "valibot";
 import type { Plan } from "./contracts.ts";
+import { readProviderResponse } from "./provider-request.ts";
 
 const cloudflareIdSchema = v.pipe(v.string(), v.regex(/^[a-f0-9]{32}$/u));
 const policySchema = v.looseObject({
@@ -23,6 +24,22 @@ const createdTokenSchema = v.object({
 });
 
 type TokenPlan = Pick<Plan, "accountId" | "requestId" | "operation" | "expiresAt">;
+type ProviderBody = Awaited<ReturnType<typeof readProviderResponse>>["body"];
+
+const errorsSchema = v.looseObject({
+  errors: v.array(v.looseObject({ code: v.number(), message: v.string() })),
+});
+
+function rejectionMessage(status: number, body: ProviderBody | undefined): string {
+  const message = `Cloudflare rejected the operation (HTTP ${status})`;
+  const parsed = v.safeParse(errorsSchema, body);
+  if (!parsed.success || parsed.output.errors.length === 0) return message;
+  const details = parsed.output.errors
+    .slice(0, 5)
+    .map((error) => `${error.code}: ${error.message.slice(0, 500)}`)
+    .join("; ");
+  return `${message}: ${details}`;
+}
 
 export class ProviderError extends Error {
   constructor(
@@ -163,18 +180,19 @@ export class CloudflareIssuer {
     if (method === "DELETE" && response.status === 404)
       return v.parse(resultSchema, null);
     if (response.status >= 400 && response.status < 500) {
-      await response.body?.cancel();
+      // A missing or malformed error body cannot make a definite rejection uncertain.
+      const details = await readProviderResponse(response, parent).catch(() => null);
       throw new ProviderError(
         "rejected",
-        `Cloudflare rejected the operation (HTTP ${response.status})`,
+        rejectionMessage(response.status, details?.body),
         undefined,
         response.status,
       );
     }
     const schema = v.looseObject({ success: v.boolean(), result: v.unknown() });
-    let data: unknown;
+    let data: ProviderBody;
     try {
-      data = await response.json();
+      data = (await readProviderResponse(response, parent)).body;
     } catch {
       throw new ProviderError(
         method === "POST" ? "unknown" : "rejected",
@@ -187,7 +205,7 @@ export class CloudflareIssuer {
         method === "POST" && (response.status >= 500 || response.ok)
           ? "unknown"
           : "rejected",
-        `Cloudflare rejected the operation (HTTP ${response.status})`,
+        rejectionMessage(response.status, data),
         undefined,
         response.status,
       );

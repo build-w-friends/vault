@@ -51,6 +51,29 @@ test("native token creation and cleanup preserve the fetch receiver contract", a
   expect(methods).toEqual(["POST", "GET", "DELETE"]);
 });
 
+test.each(["not JSON", "x".repeat(2000001)])(
+  "unreadable rejection details preserve the definite provider outcome",
+  async (body) => {
+    const provider = new CloudflareIssuer(
+      Object.assign(async () => new Response(body, { status: 400 }), {
+        preconnect: fetch.preconnect,
+      }),
+    );
+    await rejects(
+      provider.create("synthetic-parent", {
+        ...fixturePlan(),
+        accountId: fixtureIds.account,
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+      }),
+      {
+        outcome: "rejected",
+        status: 400,
+        message: "Cloudflare rejected the operation (HTTP 400)",
+      },
+    );
+  },
+);
+
 async function approve(f: Fixture, session: Session, requestId: string) {
   const path = `/issuance/approve/${requestId}`;
   expect(

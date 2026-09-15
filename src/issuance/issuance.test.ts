@@ -322,37 +322,46 @@ describe("approved issuer credentials", () => {
       }
     },
   );
-  test.each([403, 503])("HTTP %s token failures retain safe evidence", async (status) => {
-    const f = await issuanceFixture();
-    const session = await f.connect();
-    const plan = await prepare(f, session);
-    await approve(f, session, plan.requestId);
-    const provider = new CloudflareIssuer(
-      Object.assign(
-        async () =>
-          Response.json(
-            {
-              success: false,
-              result: null,
-              errors: [{ message: "synthetic-parent-never-export" }],
-            },
-            { status },
-          ),
-        { preconnect: fetch.preconnect },
-      ),
-    );
-    const service = new IssuanceService(f.store, provider);
-    const outcome = status === 403 ? "rejected" : "unknown";
-    await expectRejected(service.execute(session.auth, plan.requestId), outcome);
-    const result = await service.view(await f.store.request(plan.requestId));
-    expect(result.status).toBe(status === 403 ? "failed" : "unknown");
-    expect(result.result?.status).toBe(status);
-    expect(result.result?.body).toEqual({
-      outcome,
-      reason: `Cloudflare rejected the operation (HTTP ${status})`,
-    });
-    expect(JSON.stringify(result)).not.toContain("synthetic-parent");
-  });
+  test.each([400, 403, 503])(
+    "HTTP %s token failures retain safe evidence",
+    async (status) => {
+      const f = await issuanceFixture();
+      const session = await f.connect();
+      const plan = await prepare(f, session);
+      await approve(f, session, plan.requestId);
+      const provider = new CloudflareIssuer(
+        Object.assign(
+          async () =>
+            Response.json(
+              {
+                success: false,
+                result: { value: "synthetic-provider-secret" },
+                errors: [
+                  {
+                    code: 1001,
+                    message: "Policy rejected: synthetic-parent-never-export",
+                  },
+                ],
+              },
+              { status },
+            ),
+          { preconnect: fetch.preconnect },
+        ),
+      );
+      const service = new IssuanceService(f.store, provider);
+      const outcome = status < 500 ? "rejected" : "unknown";
+      await expectRejected(service.execute(session.auth, plan.requestId), outcome);
+      const result = await service.view(await f.store.request(plan.requestId));
+      expect(result.status).toBe(status < 500 ? "failed" : "unknown");
+      expect(result.result?.status).toBe(status);
+      expect(result.result?.body).toEqual({
+        outcome,
+        reason: `Cloudflare rejected the operation (HTTP ${status}): 1001: Policy rejected: [REDACTED]`,
+      });
+      expect(JSON.stringify(result)).not.toContain("synthetic-parent");
+      expect(JSON.stringify(result)).not.toContain("synthetic-provider-secret");
+    },
+  );
   test("parallel calls can consume the approval only once", async () => {
     const f = await issuanceFixture();
     const session = await f.connect();
