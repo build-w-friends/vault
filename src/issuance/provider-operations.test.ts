@@ -9,6 +9,48 @@ import { apiRequestSchema, prepareSchema, type ApiRequest } from "./contracts.ts
 
 type Fixture = Awaited<ReturnType<typeof issuanceFixture>>;
 type Session = Awaited<ReturnType<Fixture["connect"]>>;
+
+test("native token creation and cleanup preserve the fetch receiver contract", async () => {
+  const plan = {
+    ...fixturePlan(),
+    accountId: fixtureIds.account,
+    expiresAt: new Date(Date.now() + 3600000).toISOString(),
+  };
+  const token = {
+    id: "d".repeat(32),
+    name: `vault-issuance-${plan.requestId}`,
+    expires_on: plan.expiresAt,
+    policies: plan.operation.policies,
+    status: "active",
+    value: "synthetic-child",
+  };
+  const methods: string[] = [];
+  const send: typeof fetch = Object.assign(
+    async function (this: void, input: RequestInfo | URL, init?: RequestInit) {
+      // Workers rejects an unrelated receiver before making an outbound request.
+      if (this !== undefined) throw new TypeError("Illegal invocation");
+      const request = new Request(input, init);
+      expect(request.headers.get("Authorization")).toBe("Bearer synthetic-parent");
+      expect(request.redirect).toBe("manual");
+      methods.push(request.method);
+      if (request.method === "POST")
+        return Response.json({ success: true, result: token });
+      if (request.method === "GET")
+        return Response.json({ success: true, result: [token] });
+      expect(new URL(request.url).pathname.endsWith(`/tokens/${token.id}`)).toBe(true);
+      return Response.json({ success: true, result: { id: token.id } });
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const provider = new CloudflareIssuer(send);
+  expect(await provider.create("synthetic-parent", plan)).toEqual({
+    id: token.id,
+    value: token.value,
+  });
+  await provider.revokeUncertain("synthetic-parent", plan);
+  expect(methods).toEqual(["POST", "GET", "DELETE"]);
+});
+
 async function approve(f: Fixture, session: Session, requestId: string) {
   const path = `/issuance/approve/${requestId}`;
   expect(

@@ -133,7 +133,8 @@ export class CloudflareIssuer {
     v.parse(cloudflareIdSchema, accountId);
     let response: Response;
     try {
-      response = await this.send(
+      const send = this.send;
+      response = await send(
         `https://api.cloudflare.com/client/v4/accounts/${accountId}/tokens${suffix}`,
         {
           method,
