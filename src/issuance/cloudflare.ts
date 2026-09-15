@@ -69,7 +69,8 @@ export class CloudflareIssuer {
       JSON.stringify({
         name: this.tokenName(plan.requestId),
         policies,
-        expires_on: plan.expiresAt,
+        // Plans already end on a whole second; Cloudflare rejects even .000Z.
+        expires_on: plan.expiresAt.replace(/\.000Z$/u, "Z"),
       }),
     );
     if (

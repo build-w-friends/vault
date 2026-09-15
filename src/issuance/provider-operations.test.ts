@@ -10,16 +10,16 @@ import { apiRequestSchema, prepareSchema, type ApiRequest } from "./contracts.ts
 type Fixture = Awaited<ReturnType<typeof issuanceFixture>>;
 type Session = Awaited<ReturnType<Fixture["connect"]>>;
 
-test("native token creation and cleanup preserve the fetch receiver contract", async () => {
+test("native tokens preserve the approved expiry in Cloudflare's whole-second format", async () => {
   const plan = {
     ...fixturePlan(),
     accountId: fixtureIds.account,
-    expiresAt: new Date(Date.now() + 3600000).toISOString(),
+    expiresAt: "2026-09-16T01:02:03.000Z",
   };
   const token = {
     id: "d".repeat(32),
     name: `vault-issuance-${plan.requestId}`,
-    expires_on: plan.expiresAt,
+    expires_on: "2026-09-16T01:02:03Z",
     policies: plan.operation.policies,
     status: "active",
     value: "synthetic-child",
@@ -33,8 +33,16 @@ test("native token creation and cleanup preserve the fetch receiver contract", a
       expect(request.headers.get("Authorization")).toBe("Bearer synthetic-parent");
       expect(request.redirect).toBe("manual");
       methods.push(request.method);
-      if (request.method === "POST")
+      if (request.method === "POST") {
+        expect(await request.text()).toBe(
+          JSON.stringify({
+            name: token.name,
+            policies: plan.operation.policies,
+            expires_on: token.expires_on,
+          }),
+        );
         return Response.json({ success: true, result: token });
+      }
       if (request.method === "GET")
         return Response.json({ success: true, result: [token] });
       expect(new URL(request.url).pathname.endsWith(`/tokens/${token.id}`)).toBe(true);

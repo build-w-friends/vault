@@ -74,7 +74,11 @@ export async function issuanceFixture() {
       if (url.pathname.endsWith("/tokens") && request.method === "POST") {
         providerPosts++;
         const body = z
-          .object({ name: z.string(), expires_on: z.string(), policies: z.unknown() })
+          .object({
+            name: z.string(),
+            expires_on: z.string().datetime({ precision: 0 }),
+            policies: z.unknown(),
+          })
           .parse(await request.json());
         const token = {
           ...body,
