@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; form-action 'none'; base-uri 'none'"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <title>Add a secret · Vault</title>
+    <link rel="stylesheet" href="./style.css" />
+    <script type="module" src="./form.ts"></script>
+  </head>
+  <body>
+    <main>
+      <h1>Add a secret</h1>
+      <p class="lede">You enter the value here. Your agent receives only the result.</p>
+      <dl id="destination" aria-label="Secret destination"></dl>
+      <form id="form">
+        <label for="value">Secret value</label>
+        <input
+          id="value"
+          type="password"
+          autocomplete="off"
+          spellcheck="false"
+          maxlength="16384"
+          required
+          disabled
+          aria-describedby="hint"
+        />
+        <p id="hint">
+          Saved encrypted in Vault. This does not deploy or verify the credential.
+        </p>
+        <div class="actions">
+          <button id="save" type="submit" disabled>Save secret</button
+          ><button id="cancel" type="button" disabled>Cancel</button>
+        </div>
+      </form>
+      <p id="status" role="status" aria-live="polite">Loading destination…</p>
+      <noscript>This form needs JavaScript. Nothing has been submitted.</noscript>
+    </main>
+  </body>
+</html>

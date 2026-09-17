@@ -22,12 +22,13 @@ import {
   secretRecordSchema,
 } from "./client-schemas.ts";
 import type { Scope, SecretKind } from "./types.ts";
+import { collectedSecretSchema, type CollectionTarget } from "./collection-contract.ts";
 
 const keyResponseSchema = v.looseObject({ key: v.string(), prefix: v.string() });
 const okResponseSchema = v.looseObject({ ok: v.literal(true) });
 const errorResponseSchema = v.object({ error: v.string() });
 
-class VaultClientError extends Error {
+export class VaultClientError extends Error {
   readonly status: number;
   constructor(status: number, message: string) {
     super(message);
@@ -96,6 +97,26 @@ export class VaultClient {
       );
     }
     return result.output;
+  }
+
+  async createCollectedSecret(target: CollectionTarget, value: string) {
+    const body = v.parse(collectedSecretSchema, { kind: target.kind, value });
+    const path = `/v1/projects/${encodeURIComponent(target.project)}/environments/${encodeURIComponent(target.env)}/secrets/${encodeURIComponent(target.name)}`;
+    // A timeout or malformed reply leaves an unknown outcome; callers must not retry.
+    const response = await fetch(new URL(path, this.origin), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      redirect: "error",
+      signal: AbortSignal.timeout(30000),
+    });
+    if (response.status === 409) throw new VaultClientError(409, "secret already exists");
+    if (!response.ok)
+      throw new Error("secret collection did not return a successful receipt");
+    v.parse(okResponseSchema, await response.json());
   }
 
   bootstrap(bootstrapToken: string, label?: string) {

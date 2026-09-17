@@ -12,5 +12,6 @@
     "allowImportingTsExtensions": true,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["scripts/**/*.ts", "src/**/*.ts", "worker-configuration.d.ts"]
+  "include": ["scripts/**/*.ts", "src/**/*.ts", "worker-configuration.d.ts"],
+  "exclude": ["src/collection/form.ts", "src/collection/approval.ts"]
 }

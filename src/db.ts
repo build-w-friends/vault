@@ -17,6 +17,7 @@
  * @see {@link https://vault.buildwithfriends.dev/reference/database/}
  */
 import type { VaultCrypto } from "./crypto.ts";
+import * as v from "valibot";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type {
   ApiKeyRecord,
@@ -418,6 +419,34 @@ export class VaultStore {
     }
     secrets.sort((left, right) => left.name.localeCompare(right.name));
     return secrets;
+  }
+
+  async createSecret(
+    environmentId: string,
+    name: string,
+    value: string,
+    kind: SecretKind,
+  ): Promise<void> {
+    if (value.length === 0) throw new StoreError(400, "secret value must not be empty");
+    const row = v.parse(
+      v.nullable(v.object({ id: v.string() })),
+      await this.db
+        .prepare(
+          `INSERT INTO secrets (id, environment_id, key_encrypted, key_hash, value_encrypted, kind, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(environment_id, key_hash) DO NOTHING RETURNING id`,
+        )
+        .bind(
+          newId(),
+          environmentId,
+          await this.vaultCrypto.encrypt(name),
+          await this.vaultCrypto.lookupHash(name),
+          await this.vaultCrypto.encrypt(value),
+          kind,
+          nowIso(),
+        )
+        .first(),
+    );
+    if (!row) throw new StoreError(409, "secret already exists; no value was changed");
   }
 
   async setSecret(

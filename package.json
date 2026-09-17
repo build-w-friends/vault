@@ -25,7 +25,9 @@
     "recovery:rehearse": "bun scripts/recovery-rehearsal.ts",
     "master-keys:prepare-rotation": "bun scripts/rotate-master-key.ts prepare --yes",
     "acceptance": "bun scripts/acceptance.ts",
-    "check": "tsc --noEmit && bun run deploy:dry-run",
+    "acceptance:agent": "bun scripts/agent-acceptance.ts",
+    "acceptance:collection": "bun scripts/collection-acceptance.ts",
+    "check": "tsc --noEmit && tsc --noEmit -p tsconfig.browser.json && bun run deploy:dry-run",
     "test": "bun test src",
     "types": "wrangler types --env production --env-interface Env && (cd ../.. && bunx oxfmt poc/vault/worker-configuration.d.ts)",
     "types:check": "bun run types && git diff --exit-code -- worker-configuration.d.ts",
@@ -35,6 +37,7 @@
   "dependencies": {
     "@clack/prompts": "latest",
     "@modelcontextprotocol/server": "latest",
+    "@tanstack/form-core": "1.33.5",
     "aws4fetch": "latest",
     "hono": "latest",
     "libsodium-wrappers": "latest",

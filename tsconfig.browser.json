@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "lib": ["ESNext", "DOM"], "types": [] },
+  "include": ["src/collection/form.ts", "src/collection/approval.ts"],
+  "exclude": []
+}

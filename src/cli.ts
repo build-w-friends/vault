@@ -28,12 +28,16 @@ import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import { serveAgentMcp } from "./agent/cli.ts";
 import { runIssuanceCli } from "./issuance/cli.ts";
 import { VaultClient } from "./client.ts";
 import { resolveClientOptions, writeConfig } from "./config.ts";
 import { generateMasterKey } from "./crypto.ts";
 import { randomSecretValue } from "./keys.ts";
 import { readSecretValue } from "./prompt.ts";
+import * as v from "valibot";
+import { collectionTargetSchema } from "./collection-contract.ts";
+import { startSecretCollection, openCollectionBrowser } from "./collection.ts";
 import { proxyChildEnv, startProxy } from "./proxy.ts";
 import { loadRequiredSecretValues } from "./inject.ts";
 import { loadVaultValues, pushDestinations } from "./push.ts";
@@ -261,6 +265,17 @@ export async function runCli(argv: string[], io = DEFAULT_CLI_IO): Promise<numbe
         return 0;
       case "issuance":
         return await runIssuanceCli(flags.rest, flags.apiUrl, io);
+      case "mcp": {
+        if (flags.rest.includes("--help") || flags.rest.includes("-h")) {
+          io.log(
+            "vault mcp [--project PROJECT --env ENV]\n\nLocal MCP: describe_context, collect_secret, connect_cloudflare, request_github_access, get_task, cancel_task, read_provider. Uses the operator login; no secret values in tool inputs or receipts. Supports URL elicitation and the MCP Tasks extension. Reuse request IDs to resume. Cloudflare needs VAULT_CLOUDFLARE_OAUTH configuration; GitHub needs VAULT_GITHUB_APP. See https://vault.buildwithfriends.dev/reference/mcp/.",
+          );
+          return 0;
+        }
+        const { client, project, env } = session(flags);
+        await serveAgentMcp(client, project, env);
+        return 0;
+      }
       case "init":
         return initializeLocalVaultAt(process.cwd(), io);
       case "login": {
@@ -509,6 +524,12 @@ async function runEnvironments(flags: Flags, io: { log: (value: string) => void 
 
 async function runSecrets(flags: Flags, io: { log: (value: string) => void }) {
   const sub = flags.rest[0] ?? "list";
+  if (sub === "collect" && (flags.rest.includes("--help") || flags.rest.includes("-h"))) {
+    io.log(
+      "vault secrets collect NAME [--project PROJECT --env ENV] [--kind secret|sealed]\n\nAgents: run this command yourself when a required user-supplied secret is missing. Tell the user the form is ready and wait for the receipt; do not give them a command or ask for the value in chat. Opens a local browser form using your operator login. Enter the value in the browser, never in chat or command arguments. Creates one missing secret in an existing environment; never replaces a value. Waits up to ten minutes. Returns a JSON receipt without the secret. An unknown result must be inspected, not retried automatically. Requires the create-only Vault API.",
+    );
+    return 0;
+  }
   const { client, project, env } = session(flags);
   if (sub === "list") {
     const meta = await client.listSecretMeta(project, env);
@@ -521,6 +542,50 @@ async function runSecrets(flags: Flags, io: { log: (value: string) => void }) {
   if (name == null) throw new Error(`usage: vault secrets ${sub} NAME`);
   if (name.includes("=")) {
     throw new Error("inline secret values are not accepted; use hidden input or stdin");
+  }
+  if (sub === "collect") {
+    if (flags.rest.length !== 2 || flags.random || flags.yes)
+      throw new Error(
+        "usage: vault secrets collect NAME [--kind secret|sealed] [--project PROJECT --env ENV]",
+      );
+    const parsed = v.safeParse(collectionTargetSchema, {
+      project,
+      env,
+      name,
+      kind: flags.kind ?? "secret",
+    });
+    if (!parsed.success)
+      throw new Error(
+        "invalid collection destination or kind; use a secret name and kind secret or sealed",
+      );
+    const target = parsed.output;
+    const meta = await client.listSecretMeta(project, env);
+    if (meta.secrets.some((secret) => secret.name === name))
+      throw new Error("secret already exists; collection never replaces a value");
+    const collection = startSecretCollection({
+      target,
+      vaultOrigin: client.apiUrl,
+      save: (value) => client.createCollectedSecret(target, value),
+    });
+    const interrupt = () => {
+      void collection.stop();
+    };
+    process.once("SIGINT", interrupt);
+    process.once("SIGTERM", interrupt);
+    try {
+      io.log(`Open this local Vault page to enter the secret: ${collection.url}`);
+      if (!(await openCollectionBrowser(collection.url)))
+        io.log("The browser could not be opened. Open the URL above on this machine.");
+      const receipt = await collection.completed;
+      io.log(JSON.stringify(receipt));
+      // Keep the HTTP response alive long enough for the browser to render its receipt.
+      await new Promise((done) => setTimeout(done, 1000));
+      return receipt.state === "stored" ? 0 : 1;
+    } finally {
+      process.off("SIGINT", interrupt);
+      process.off("SIGTERM", interrupt);
+      await collection.stop();
+    }
   }
   if (sub === "get") {
     const secret = await client.getSecret(project, env, name);
@@ -714,10 +779,12 @@ function helpText(): string {
   vault bootstrap --api-url URL [--label LABEL] [--expires-in-days 90]
   vault login --api-url URL                 # hidden API-key prompt
   vault status
+  vault mcp                                # local secret prompts and provider access
   vault projects list|create NAME|delete NAME --yes
   vault environments list|create NAME|delete NAME --yes
   vault secrets list|get NAME|set NAME [--kind config|secret|sealed] [--random]
   vault secrets delete NAME --yes
+  vault secrets collect NAME [--kind secret|sealed] # browser entry; create only
   vault keys list [--include-revoked]
   vault keys create --type system --scope PROJECT/ENV [--mode inject|broker]
   vault keys rotate PREFIX | revoke PREFIX --yes
@@ -734,6 +801,12 @@ function helpText(): string {
   vault issuance admin | inspect REQUEST_ID | logout
   vault issuance [COMMAND] --help          # setup, approval flow, and tool reference
   vault init                               # local development only
+
+Agents: when a user-supplied secret is missing, run secrets collect yourself on
+the operator's machine, tell the user the form is ready, and wait for its receipt.
+Do not ask for the value in chat or hand the user a command. Inspect names first;
+continue only after stored. Cancelled/expired stops; unknown requires inspection.
+See vault secrets collect --help. Existing interactive secrets set stays available.
 
 Secret values and login/bootstrap credentials are read from hidden input or stdin.
 VAULT_API_URL, VAULT_API_KEY, and VAULT_BOOTSTRAP_TOKEN are supported environment inputs.

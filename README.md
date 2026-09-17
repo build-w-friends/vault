@@ -74,12 +74,45 @@ commands require `--yes`. A newly created or rotated API key is shown once.
 
 ```sh
 vault secrets set NAME --kind secret
+vault secrets collect NEW_NAME --kind secret
 vault secrets set GENERATED_NAME --kind sealed --random
 vault secrets delete NAME --yes
 vault keys create --type system --scope bwf/dev --mode inject
 vault keys rotate vault_sys_PREFIX
 vault keys revoke vault_sys_PREFIX --yes
 ```
+
+Agents should first check secret names, then run `vault secrets collect NAME
+--project PROJECT --env ENV` themselves when a required user-supplied value is
+missing. Tell the user the form is ready and wait for the receipt; do not give
+them a command to run or ask for the value in chat. Continue after `stored`,
+respect cancellation or expiry, and inspect an `unknown` outcome before any new
+request. Existing interactive `vault secrets set` remains available for people
+using the CLI directly.
+
+`vault mcp --project PROJECT --env ENV` exposes these operator workflows as
+native agent tools: secret collection, Cloudflare OAuth connection, approved
+one-repository GitHub reads, and durable task status/resumption. Clients can use
+URL elicitation or the MCP Tasks extension; the CLI remains available. Provider
+applications must be registered and their setup records present in Vault. See the
+[agent tools and setup reference](https://vault.buildwithfriends.dev/reference/mcp/).
+Run `bun run --cwd poc/vault acceptance:agent` for synthetic browser approval and
+brokered-read evidence. No real provider registration or deployment is performed.
+
+For an AI-assisted setup, `vault secrets collect NEW_NAME` opens a local browser
+form. The person enters the value there; the command returns only a JSON receipt.
+It uses the operator login and an existing project/environment, creates only a
+missing name, and never replaces a value. Entry expires after ten minutes.
+Cancellation before submission writes nothing. A lost save reply is `unknown`;
+inspect Vault before starting another request. Saving does not verify the provider
+credential or deploy it. The form and its TanStack Form assets are embedded in
+the CLI, with no CDN or telemetry. This protects ordinary agent context, not
+against a malicious process with access to the same operating-system account.
+Deploy the create-only API before using the new CLI against a remote Vault.
+
+Run `bun run --cwd poc/vault acceptance:collection` for synthetic browser and
+encrypted-storage acceptance. Images and the receipt are under
+`poc/vault/.wrangler/collection-acceptance`.
 
 `vault run` exports only names declared in the target Wrangler
 `secrets.required` list and fails closed when any is missing. When that config

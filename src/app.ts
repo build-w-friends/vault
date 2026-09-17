@@ -42,6 +42,8 @@ import { IssuanceStore } from "./issuance/store.ts";
 import { IssuanceService } from "./issuance/service.ts";
 import { adminSchema, id as issuanceId } from "./issuance/contracts.ts";
 import { handleMcp } from "./mcp.ts";
+import { collectedSecretSchema, collectionTargetSchema } from "./collection-contract.ts";
+import { bodyLimit } from "hono/body-limit";
 import { genericRoute, routePreset } from "./presets.ts";
 import type {
   ApiKeyMeta,
@@ -355,6 +357,41 @@ export function createApp(
     });
     return c.json(secret);
   });
+
+  app.post(
+    "/v1/projects/:project/environments/:env/secrets/:name",
+    bodyLimit({ maxSize: 65536 }),
+    async (c) => {
+      const key = c.get("key");
+      if (key.type !== "user")
+        throw new PolicyError(403, "secret collection requires an operator login");
+      assertCanWrite(key);
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        throw new PolicyError(400, "invalid secret input");
+      }
+      const parsed = v.safeParse(collectedSecretSchema, body);
+      if (!parsed.success) throw new PolicyError(400, "invalid secret input");
+      const target = v.safeParse(collectionTargetSchema, {
+        ...c.req.param(),
+        kind: parsed.output.kind,
+      });
+      if (!target.success) throw new PolicyError(400, "invalid secret destination");
+      const { project, env, name, kind } = target.output;
+      const store = c.get("store");
+      const { environmentId } = await store.requireEnvironment(project, env);
+      await store.createSecret(environmentId, name, parsed.output.value, kind);
+      await store.audit({
+        keyPrefix: key.keyPrefix,
+        action: "set",
+        status: "ok",
+        secretName: name,
+      });
+      return c.json({ ok: true }, 201);
+    },
+  );
 
   app.patch("/v1/projects/:project/environments/:env/secrets", async (c) => {
     const key = c.get("key");
