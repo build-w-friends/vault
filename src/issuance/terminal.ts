@@ -43,7 +43,7 @@ export function terminalPrompts(): ConnectPrompts {
       prompts.cancel(message, streams);
     },
     async ask(message, validate) {
-      return answer(
+      return answer<string>(
         await prompts.text({
           ...streams,
           message: message.trim().replace(/:$/u, ""),
@@ -52,7 +52,7 @@ export function terminalPrompts(): ConnectPrompts {
       );
     },
     async secret(message) {
-      return answer(
+      return answer<string>(
         await prompts.password({
           ...streams,
           message: message.trim().replace(/:$/u, ""),
@@ -61,7 +61,7 @@ export function terminalPrompts(): ConnectPrompts {
       );
     },
     async select(message, entries, label) {
-      const selected = answer(
+      const selected = answer<{ entry: (typeof entries)[number] }>(
         await prompts.select({
           ...streams,
           message,
@@ -71,7 +71,7 @@ export function terminalPrompts(): ConnectPrompts {
       return selected.entry;
     },
     async multiselect(message, entries, label) {
-      const selected = answer(
+      const selected = answer<{ entry: (typeof entries)[number] }[]>(
         await prompts.multiselect({
           ...streams,
           message,
@@ -82,7 +82,9 @@ export function terminalPrompts(): ConnectPrompts {
       return selected.map(({ entry }) => entry);
     },
     async confirm(message) {
-      return answer(await prompts.confirm({ ...streams, message, initialValue: false }));
+      return answer<boolean>(
+        await prompts.confirm({ ...streams, message, initialValue: false }),
+      );
     },
     async open(url) {
       const command = BROWSER_OPENERS[process.platform] ?? "xdg-open";
