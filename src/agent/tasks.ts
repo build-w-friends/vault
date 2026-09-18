@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import * as v from "valibot";
 
-export const taskSchema = v.object({
+const taskSchema = v.object({
   taskId: v.pipe(v.string(), v.uuid()),
   requestId: v.pipe(v.string(), v.uuid()),
   ownerPid: v.number(),

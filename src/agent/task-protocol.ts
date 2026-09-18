@@ -7,7 +7,7 @@ import {
 import * as v from "valibot";
 import type { AgentTask } from "./tasks.ts";
 import type { AgentRuntime } from "./runtime.ts";
-export const taskExtension = "io.modelcontextprotocol/tasks";
+const taskExtension = "io.modelcontextprotocol/tasks";
 export const capabilitySchema = v.object({
   [CLIENT_CAPABILITIES_META_KEY]: v.optional(
     v.object({
@@ -26,7 +26,7 @@ export function parseTaskCapability(envelope: v.InferOutput<typeof capabilitySch
     )
   );
 }
-export function taskView(task: AgentTask) {
+function taskView(task: AgentTask) {
   const pending = task.state === "waiting" || task.state === "saving";
   const status =
     task.state === "cancelled" || task.state === "expired"
