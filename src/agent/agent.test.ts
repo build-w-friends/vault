@@ -79,7 +79,9 @@ test("MCP discovers tools, elicits a URL and negotiates durable Tasks without se
   ) {
     const params = z.record(z.string(), z.json()).parse(args);
     return new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("MCP response timed out")), 3000);
+      const timer = setTimeout(() => {
+        reject(new Error("MCP response timed out"));
+      }, 3000);
       output.once("data", (data: Buffer) => {
         clearTimeout(timer);
         resolve(data.toString());

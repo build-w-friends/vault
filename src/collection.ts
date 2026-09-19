@@ -120,7 +120,9 @@ export function startSecretCollection(input: {
     },
   });
   const origin = `http://127.0.0.1:${server.port}`;
-  const timer = setTimeout(() => terminal("expired"), input.timeoutMs ?? 600000);
+  const timer = setTimeout(() => {
+    terminal("expired");
+  }, input.timeoutMs ?? 600000);
   return {
     url: `${origin}${path}`,
     completed,
@@ -143,7 +145,11 @@ export async function openCollectionBrowser(url: string): Promise<boolean> {
         : "xdg-open";
   return new Promise((resolve) => {
     const child = spawn(command, [url], { stdio: "ignore" });
-    child.once("error", () => resolve(false));
-    child.once("exit", (code) => resolve(code === 0));
+    child.once("error", () => {
+      resolve(false);
+    });
+    child.once("exit", (code) => {
+      resolve(code === 0);
+    });
   });
 }

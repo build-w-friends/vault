@@ -39,13 +39,13 @@ export class AgentRuntime {
   }
   async context() {
     const meta = await this.client.listSecretMeta(this.project, this.env);
-    const names = meta.secrets.map((secret) => secret.name);
+    const names = new Set(meta.secrets.map((secret) => secret.name));
     return {
       project: this.project,
       env: this.env,
       secrets: meta.secrets.map(({ name, kind }) => ({ name, kind })),
-      cloudflareConfigured: names.includes("VAULT_CLOUDFLARE_OAUTH"),
-      githubConfigured: names.includes("VAULT_GITHUB_APP"),
+      cloudflareConfigured: names.has("VAULT_CLOUDFLARE_OAUTH"),
+      githubConfigured: names.has("VAULT_GITHUB_APP"),
       message:
         "Collect missing values through collect_secret. Provider configuration stays in Vault. Provider access is referenced by task ID, never returned as a token.",
     };

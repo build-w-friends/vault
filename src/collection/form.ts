@@ -61,7 +61,9 @@ const form = new FormApi({
   },
 });
 form.mount();
-input.addEventListener("input", () => form.setFieldValue("value", input.value));
+input.addEventListener("input", () => {
+  form.setFieldValue("value", input.value);
+});
 document.querySelector<HTMLFormElement>("#form")!.addEventListener("submit", (event) => {
   event.preventDefault();
   if (!terminal) void form.handleSubmit();
