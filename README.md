@@ -145,21 +145,23 @@ credential:
 ```sh
 bun run vault:verify
 bun run vault:canary:oauth
-bun run vault:canary:sentry
 bun run vault:recovery:rehearse
 ```
 
 This checks the GitHub App, both analytics platform tokens, both
 Cloudflare tokens, both R2 credential pairs, and the Sentry API credential.
-OAuth and event ingestion use the separate Vault-backed consumer canaries
-above. The OAuth canary boots the exact registered loopback origin, verifies
-identity and GitHub App redirects, PKCE, state, scopes, and callback URLs, then
-confirms GitHub accepts both client registrations without completing consent.
-The Sentry canary packages the application with explicit export and source-map
-upload, emits one opaque diagnostic, and queries that exact diagnostic back.
-The recovery rehearsal captures a restricted production export, proves it in
-disposable Cloudflare infrastructure, and removes that infrastructure. Realtime
-media remains the existing explicit desktop acceptance command.
+OAuth uses the separate Vault-backed consumer canary above. The OAuth canary
+boots the exact registered loopback origin, verifies identity and GitHub App
+redirects, PKCE, state, scopes, and callback URLs, then confirms GitHub
+accepts both client registrations without completing consent. Sentry has no
+end-to-end ingestion canary today: the packaged-renderer-fault proof and its
+`diagnostics:sentry:proof` trigger were removed in a 2026-09-12 refactor, and
+the follow-up cleanup (2026-09-19) retired the now-broken `canary:sentry`
+script rather than rebuild it; `vault:verify`'s read-only probe is the only
+remaining check on that credential. The recovery rehearsal captures a
+restricted production export, proves it in disposable Cloudflare
+infrastructure, and removes that infrastructure. Realtime media remains the
+existing explicit desktop acceptance command.
 
 ## Local development
 

@@ -5,8 +5,6 @@ import {
   assertGitHubAuthorizationUrl,
   d1DatabaseIdFromListOutput,
   deployedWorkersDevUrl,
-  diagnosticIdFromProofOutput,
-  sentryCanaryEventsUrl,
   secretsStoreSecretId,
 } from "./operational-proofs.ts";
 
@@ -55,27 +53,6 @@ describe("operational proof parsers", () => {
         body: "<title>Authorize Build With Friends</title>",
       });
     }).not.toThrow();
-  });
-
-  test("extracts only the opaque Sentry diagnostic id", () => {
-    expect(
-      diagnosticIdFromProofOutput(
-        "[PASS] Packaged Sentry fault flushed (bwf_123e4567-e89b-42d3-a456-426614174000)",
-      ),
-    ).toBe("bwf_123e4567-e89b-42d3-a456-426614174000");
-  });
-
-  test("builds a bounded Sentry lookup", () => {
-    const url = sentryCanaryEventsUrl({
-      diagnosticId: "bwf_123e4567-e89b-42d3-a456-426614174000",
-      organization: "bwf",
-      project: "desktop",
-      release: "build-with-friends@0.1.0+abc",
-    });
-    expect(url.pathname).toBe("/api/0/organizations/bwf/events/");
-    expect(url.searchParams.get("dataset")).toBe("errors");
-    expect(url.searchParams.get("statsPeriod")).toBe("1h");
-    expect(url.searchParams.get("query")).toContain("bwf.diagnostic_id:");
   });
 
   test("extracts disposable Cloudflare resource identities", () => {

@@ -20,7 +20,6 @@
     "migrations:production": "wrangler d1 migrations apply DB --remote --env production",
     "canary:oauth": "bun scripts/canary-oauth.ts",
     "canary:posthog": "bun scripts/canary-posthog.ts posthog",
-    "canary:sentry": "bun scripts/canary-sentry.ts",
     "verify:providers": "bun scripts/verify-providers.ts",
     "recovery:rehearse": "bun scripts/recovery-rehearsal.ts",
     "master-keys:prepare-rotation": "bun scripts/rotate-master-key.ts prepare --yes",

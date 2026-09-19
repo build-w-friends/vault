@@ -6,9 +6,6 @@ export type GitHubAuthorizationExpectation = {
   readonly scopes?: readonly string[];
 };
 
-const DIAGNOSTIC_ID =
-  /\bbwf_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/u;
-
 /** Validate the public half of a GitHub authorization request without retaining credentials. */
 export function assertGitHubAuthorizationUrl(
   value: string,
@@ -66,37 +63,6 @@ export function assertGitHubAuthorizationPage(input: {
   ) {
     throw new Error("GitHub rejected the OAuth application configuration");
   }
-}
-
-export function diagnosticIdFromProofOutput(output: string): string {
-  const match = DIAGNOSTIC_ID.exec(output)?.[0];
-  if (match === undefined) {
-    throw new Error("packaged Sentry proof did not report a diagnostic id");
-  }
-  return match;
-}
-
-export function sentryCanaryEventsUrl(input: {
-  readonly diagnosticId: string;
-  readonly organization: string;
-  readonly project: string;
-  readonly release: string;
-}): URL {
-  const url = new URL(
-    `/api/0/organizations/${encodeURIComponent(input.organization)}/events/`,
-    "https://sentry.io",
-  );
-  url.searchParams.set("dataset", "errors");
-  url.searchParams.set("project", input.project);
-  url.searchParams.set("statsPeriod", "1h");
-  for (const field of ["id", "title", "release"]) {
-    url.searchParams.append("field", field);
-  }
-  url.searchParams.set(
-    "query",
-    `bwf.diagnostic_id:${input.diagnosticId} release:${input.release}`,
-  );
-  return url;
 }
 
 export function d1DatabaseIdFromListOutput(output: string, name: string): string {
