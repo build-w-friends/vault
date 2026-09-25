@@ -25,31 +25,28 @@ test("native tokens preserve the approved expiry in Cloudflare's whole-second fo
     value: "synthetic-child",
   };
   const methods: string[] = [];
-  const send: typeof fetch = Object.assign(
-    async function (this: void, input: RequestInfo | URL, init?: RequestInit) {
-      // Workers rejects an unrelated receiver before making an outbound request.
-      if (this !== undefined) throw new TypeError("Illegal invocation");
-      const request = new Request(input, init);
-      expect(request.headers.get("Authorization")).toBe("Bearer synthetic-parent");
-      expect(request.redirect).toBe("manual");
-      methods.push(request.method);
-      if (request.method === "POST") {
-        expect(await request.text()).toBe(
-          JSON.stringify({
-            name: token.name,
-            policies: plan.operation.policies,
-            expires_on: token.expires_on,
-          }),
-        );
-        return Response.json({ success: true, result: token });
-      }
-      if (request.method === "GET")
-        return Response.json({ success: true, result: [token] });
-      expect(new URL(request.url).pathname.endsWith(`/tokens/${token.id}`)).toBe(true);
-      return Response.json({ success: true, result: { id: token.id } });
-    },
-    { preconnect: fetch.preconnect },
-  );
+  const send = async function (this: void, input: RequestInfo | URL, init?: RequestInit) {
+    // Workers rejects an unrelated receiver before making an outbound request.
+    if (this !== undefined) throw new TypeError("Illegal invocation");
+    const request = new Request(input, init);
+    expect(request.headers.get("Authorization")).toBe("Bearer synthetic-parent");
+    expect(request.redirect).toBe("manual");
+    methods.push(request.method);
+    if (request.method === "POST") {
+      expect(await request.text()).toBe(
+        JSON.stringify({
+          name: token.name,
+          policies: plan.operation.policies,
+          expires_on: token.expires_on,
+        }),
+      );
+      return Response.json({ success: true, result: token });
+    }
+    if (request.method === "GET")
+      return Response.json({ success: true, result: [token] });
+    expect(new URL(request.url).pathname.endsWith(`/tokens/${token.id}`)).toBe(true);
+    return Response.json({ success: true, result: { id: token.id } });
+  };
   const provider = new CloudflareIssuer(send);
   expect(await provider.create("synthetic-parent", plan)).toEqual({
     id: token.id,
@@ -63,9 +60,7 @@ test.each(["not JSON", "x".repeat(2000001)])(
   "unreadable rejection details preserve the definite provider outcome",
   async (body) => {
     const provider = new CloudflareIssuer(
-      Object.assign(async () => new Response(body, { status: 400 }), {
-        preconnect: fetch.preconnect,
-      }),
+      async () => new Response(body, { status: 400 }),
     );
     await rejects(
       provider.create("synthetic-parent", {
@@ -107,14 +102,8 @@ async function prepareApi(f: Fixture, session: Session, request: ApiRequest) {
   return plan;
 }
 function withSend(f: Fixture, send: (request: Request) => Promise<Response>) {
-  return new IssuanceService(
-    f.store,
-    f.service.provider,
-    Object.assign(
-      async (input: RequestInfo | URL, init?: RequestInit) =>
-        send(new Request(input, init)),
-      { preconnect: fetch.preconnect },
-    ),
+  return new IssuanceService(f.store, async (input, init) =>
+    send(new Request(input, init)),
   );
 }
 
@@ -457,17 +446,11 @@ test("provider redirects never forward the credential or return a success", asyn
       return new Response(null, { status: 302, headers: { Location: "/redirected" } });
     },
   });
-  const send: typeof fetch = Object.assign(
-    (input: RequestInfo | URL, init?: RequestInit) =>
-      fetch(
-        new URL(
-          new URL(input instanceof Request ? input.url : input).pathname,
-          server.url,
-        ),
-        init,
-      ),
-    { preconnect: fetch.preconnect },
-  );
+  const send = (input: RequestInfo | URL, init?: RequestInit) =>
+    fetch(
+      new URL(new URL(input instanceof Request ? input.url : input).pathname, server.url),
+      init,
+    );
   try {
     await rejects(
       providerRequest(

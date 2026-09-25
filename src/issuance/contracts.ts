@@ -167,6 +167,19 @@ export type Issuer = {
   parent_encrypted: string;
   revoked_at: number | null;
 };
+const requestStatusSchema = z.enum([
+  "prepared",
+  "approved",
+  "declined",
+  "executing",
+  "completed",
+  "issued",
+  "unknown",
+  "failed",
+  "revoking",
+  "revoked",
+  "expired",
+]);
 export type IssuanceRequest = {
   id: string;
   issuer_id: string;
@@ -177,18 +190,7 @@ export type IssuanceRequest = {
   created_at: number;
   approve_before: number;
   expires_at: number;
-  status:
-    | "prepared"
-    | "approved"
-    | "declined"
-    | "executing"
-    | "completed"
-    | "issued"
-    | "unknown"
-    | "failed"
-    | "revoking"
-    | "revoked"
-    | "expired";
+  status: z.infer<typeof requestStatusSchema>;
   kind: "api-request" | "create-token";
   output_id: string | null;
   token_id: string | null;
@@ -204,19 +206,7 @@ const requestViewSchema = z.object({
   requestId: id,
   issuer: z.string(),
   tenantId: id,
-  status: z.enum([
-    "prepared",
-    "approved",
-    "declined",
-    "executing",
-    "completed",
-    "issued",
-    "unknown",
-    "failed",
-    "revoking",
-    "revoked",
-    "expired",
-  ]),
+  status: requestStatusSchema,
   plan: planSchema,
   effect: z.string(),
   approvalUrl: z.string().url(),

@@ -1,4 +1,6 @@
 import * as v from "valibot";
+import { text } from "node:stream/consumers";
+
 export async function readSecretValue(
   inline: string | undefined,
   stdin: NodeJS.ReadableStream & { isTTY?: boolean } = process.stdin,
@@ -7,11 +9,9 @@ export async function readSecretValue(
 ): Promise<string> {
   if (inline != null && inline.length > 0) return inline;
   if (stdin.isTTY !== true) {
-    const chunks: Buffer[] = [];
-    for await (const chunk of stdin) chunks.push(Buffer.from(chunk));
-    const text = Buffer.concat(chunks).toString("utf8").replace(/\n$/u, "");
-    if (text.length === 0) throw new Error("secret value must not be empty");
-    return text;
+    const piped = (await text(stdin)).replace(/\n$/u, "");
+    if (piped.length === 0) throw new Error("secret value must not be empty");
+    return piped;
   }
   stdout.write(prompt);
   const value = await readHidden(stdin, stdout);
@@ -33,8 +33,8 @@ function readHidden(
     stdin.setEncoding?.("utf8");
     let value = "";
     const onData = (chunk: string | Buffer) => {
-      const text = v.is(v.string(), chunk) ? chunk : chunk.toString("utf8");
-      for (const character of text) {
+      const typed = v.is(v.string(), chunk) ? chunk : chunk.toString("utf8");
+      for (const character of typed) {
         if (character === "\n" || character === "\r") {
           cleanup();
           stdout.write("\n");

@@ -1,6 +1,4 @@
 import * as prompts from "@clack/prompts";
-import * as v from "valibot";
-import { spawn } from "node:child_process";
 import type { ConnectPrompts } from "./connect-cloudflare.ts";
 
 export class PromptCancelledError extends Error {
@@ -12,8 +10,10 @@ export class PromptCancelledError extends Error {
 }
 
 function answer<T>(value: T | symbol): T {
-  if (v.is(v.symbol(), value)) throw new PromptCancelledError();
-  return value;
+  if (prompts.isCancel(value)) throw new PromptCancelledError();
+  // SAFETY: a clack prompt returns its answer or the cancel symbol, excluded above;
+  // isCancel narrows only that unique symbol, not the `symbol` in the prompt types.
+  return value as T;
 }
 
 /** How each platform opens a URL; everything else uses the freedesktop tool. */
@@ -88,15 +88,15 @@ export function terminalPrompts(): ConnectPrompts {
     },
     async open(url) {
       const command = BROWSER_OPENERS[process.platform] ?? "xdg-open";
-      const opened = await new Promise<boolean>((resolve) => {
-        const child = spawn(command, [url], { stdio: "ignore" });
-        child.on("error", () => {
-          resolve(false);
-        });
-        child.on("exit", (code) => {
-          resolve(code === 0);
-        });
-      });
+      let opened: boolean;
+      try {
+        // Bun.spawn throws synchronously when the opener is not installed.
+        opened =
+          (await Bun.spawn([command, url], { stdio: ["ignore", "ignore", "ignore"] })
+            .exited) === 0;
+      } catch {
+        opened = false;
+      }
       if (!opened) say("The browser could not be opened. Open the printed URL manually.");
     },
   };

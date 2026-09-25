@@ -1,31 +1,11 @@
 import { chromium } from "playwright";
-import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
-import * as v from "valibot";
-import { createTestVault, bootstrapUser, authHeaders } from "../src/harness.ts";
-import { VaultClient } from "../src/client.ts";
 import { startSecretCollection } from "../src/collection.ts";
+import { startLocalVault } from "./local-vault.ts";
 
-const output = resolve(import.meta.dir, "../.wrangler/collection-acceptance");
-await mkdir(output, { recursive: true });
-const { app, env, store } = await createTestVault();
-const key = await bootstrapUser(app, env);
-await app.request(
-  "/v1/projects",
-  {
-    method: "POST",
-    headers: authHeaders(key, "application/json"),
-    body: JSON.stringify({ name: "demo" }),
-  },
-  env,
+const { output, store, api, origin, client } = await startLocalVault(
+  "collection-acceptance",
 );
-const api = Bun.serve({
-  hostname: "127.0.0.1",
-  port: 0,
-  fetch: (request) => app.fetch(request, env),
-});
-const origin = `http://127.0.0.1:${api.port}`;
-const client = new VaultClient(origin, key);
 const browser = await chromium.launch({ headless: true });
 const results: string[] = [];
 try {
@@ -118,10 +98,7 @@ try {
   } finally {
     await helper.stop();
   }
-  await Bun.write(
-    resolve(output, "receipt.json"),
-    JSON.stringify(v.parse(v.array(v.string()), results), null, 2),
-  );
+  await Bun.write(resolve(output, "receipt.json"), JSON.stringify(results, null, 2));
   console.log(results.join("\n"));
   console.log(`Synthetic acceptance evidence: ${output}`);
 } finally {

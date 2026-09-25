@@ -93,7 +93,7 @@ describe("worker api", () => {
       env,
     );
     const { environmentId } = await store.requireEnvironment("demo", "dev");
-    const dump = await store.ciphertextDump(environmentId);
+    const dump = await store.listSecretRows(environmentId);
     const blob = JSON.stringify(dump);
     expect(blob.includes("super-secret-value")).toBe(false);
     expect(blob.includes("TOKEN")).toBe(false);

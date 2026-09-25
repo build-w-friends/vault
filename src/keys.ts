@@ -13,19 +13,14 @@ import type { KeyType } from "./types.ts";
 type RandomApiKeyResult = { plaintext: string; prefix: string };
 
 export function randomApiKey(type: KeyType): RandomApiKeyResult {
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  let hex = "";
-  for (const byte of bytes) hex += byte.toString(16).padStart(2, "0");
+  const hex = crypto.getRandomValues(new Uint8Array(16)).toHex();
   const head = type === "user" ? "vault_user_" : "vault_sys_";
   const plaintext = `${head}${hex}`;
   return { plaintext, prefix: plaintext.slice(0, 27) };
 }
 
 export function randomSecretValue(bytes = 32): string {
-  const raw = crypto.getRandomValues(new Uint8Array(bytes));
-  let hex = "";
-  for (const byte of raw) hex += byte.toString(16).padStart(2, "0");
-  return hex;
+  return crypto.getRandomValues(new Uint8Array(bytes)).toHex();
 }
 
 export function bearerFrom(header: string | undefined): string | null {

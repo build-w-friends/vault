@@ -1,7 +1,7 @@
 import type { Plugin } from "vite";
 import { VaultClient } from "./client.ts";
 import { resolveClientOptions } from "./config.ts";
-import { injectRequiredIntoProcess } from "./inject.ts";
+import { loadRequiredSecretValues } from "./inject.ts";
 import { loadRepoContext } from "./repo-config.ts";
 
 /**
@@ -21,10 +21,13 @@ export function vault(options?: { cwd?: string }) {
         project: repo.vault.project,
         env: repo.vault.env,
       });
-      const client = new VaultClient(resolved.apiUrl, resolved.apiKey);
-      const project = resolved.project ?? repo.vault.project ?? "bwf";
-      const vaultEnv = resolved.env ?? repo.vault.env ?? "dev";
-      await injectRequiredIntoProcess({ cwd, client, project, env: vaultEnv });
+      const values = await loadRequiredSecretValues({
+        cwd,
+        client: new VaultClient(resolved.apiUrl, resolved.apiKey),
+        project: resolved.project ?? "bwf",
+        env: resolved.env ?? "dev",
+      });
+      Object.assign(process.env, values);
     },
   } satisfies Plugin;
 }

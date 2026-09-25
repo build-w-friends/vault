@@ -30,11 +30,7 @@ function configPath(): string {
 }
 
 export function readConfig(): VaultConfig {
-  try {
-    return readConfigAt(configPath());
-  } catch {
-    return {};
-  }
+  return readConfigAt(configPath());
 }
 
 /** Read a config file, treating absent or malformed operator state as empty. */
@@ -75,14 +71,11 @@ export function resolveClientOptions(flags: VaultConfig): ResolveClientOptionsRe
     throw new Error("missing API URL (login or --api-url)");
   if (apiKey == null || apiKey.length === 0)
     throw new Error("missing API key (login or --api-key)");
-  const project = flags.project ?? process.env.VAULT_PROJECT ?? stored.project;
-  const env = flags.env ?? process.env.VAULT_ENV ?? stored.env;
-  const result: ResolveClientOptionsResult = {
+  return {
     apiUrl,
     apiKey,
+    project: flags.project ?? process.env.VAULT_PROJECT ?? stored.project,
+    env: flags.env ?? process.env.VAULT_ENV ?? stored.env,
+    githubRepo: stored.githubRepo,
   };
-  if (project != null) result.project = project;
-  if (env != null) result.env = env;
-  if (stored.githubRepo != null) result.githubRepo = stored.githubRepo;
-  return result;
 }

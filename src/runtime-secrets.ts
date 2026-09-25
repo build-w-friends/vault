@@ -1,3 +1,4 @@
+import * as v from "valibot";
 /**
  * Reading the Worker's required runtime configuration.
  *
@@ -14,7 +15,6 @@
  * @see {@link https://vault.buildwithfriends.dev/reference/configuration/}
  */
 import { MasterKeyError } from "./crypto.ts";
-import * as v from "valibot";
 
 export async function readRuntimeSecret(
   binding: SecretsStoreSecret | string | undefined,

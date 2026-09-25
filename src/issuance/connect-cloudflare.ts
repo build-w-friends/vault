@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { adminSchema, cfId, id, subject } from "./contracts.ts";
+import type { Send } from "./provider-request.ts";
 
 const namedCloudflareResource = z.object({ id: cfId, name: z.string().min(1) });
 export const setupSchema = z.object({
@@ -50,7 +51,7 @@ export function cloudflareTokenTemplate() {
 export class CloudflareDiscovery {
   constructor(
     private readonly token: string,
-    private readonly send: typeof fetch = fetch,
+    private readonly send: Send = fetch,
   ) {}
 
   private async request(path: string) {
@@ -166,7 +167,7 @@ async function required(ui: ConnectPrompts, label: string) {
   });
   return answer.trim();
 }
-async function githubMember(login: string, send: typeof fetch) {
+async function githubMember(login: string, send: Send) {
   if (!/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/u.test(login))
     throw new Error("Enter a GitHub username, not a URL or ID.");
   const response = await send(`https://api.github.com/users/${login}`, {
@@ -190,7 +191,7 @@ export async function connectCloudflare(options: {
   ui: ConnectPrompts;
   setup: z.infer<typeof setupSchema>;
   save: (input: Admin) => Promise<void>;
-  send?: typeof fetch;
+  send?: Send;
 }) {
   const { ui, setup, save, send = fetch } = options;
   if (!setup.identityConfigured)
@@ -327,7 +328,7 @@ export async function setupIssuance(options: {
   setup: z.infer<typeof setupSchema>;
   origin: string;
   save: (input: Admin) => Promise<void>;
-  send?: typeof fetch;
+  send?: Send;
 }) {
   const { ui, setup, origin, save, send = fetch } = options;
   const action = setup.identityConfigured

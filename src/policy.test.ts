@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { canDecryptValues, valueVisibleOnGet, valueVisibleOnList } from "./policy.ts";
+import { canDecryptValues, valueVisibleOnGet } from "./policy.ts";
 import type { ApiKeyRecord } from "./types.ts";
 
 const user: ApiKeyRecord = {
@@ -55,10 +55,9 @@ describe("policy", () => {
     expect(canDecryptValues(user)).toBe(true);
   });
 
-  test("sealed values never appear on get or list --show", () => {
+  test("sealed values never appear on get", () => {
     expect(valueVisibleOnGet(user, "sealed")).toBe(false);
-    expect(valueVisibleOnList(user, "sealed", true)).toBe(false);
     expect(valueVisibleOnGet(user, "secret")).toBe(true);
-    expect(valueVisibleOnList(broker, "secret", true)).toBe(false);
+    expect(valueVisibleOnGet(broker, "secret")).toBe(false);
   });
 });

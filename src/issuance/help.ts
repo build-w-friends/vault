@@ -129,18 +129,10 @@ An operator can revoke a session using vault issuance admin.`,
 
 export function issuanceHelp(topic?: string): string {
   if (topic !== undefined) {
-    switch (topic) {
-      case "connect":
-      case "setup":
-      case "login":
-      case "mcp":
-      case "admin":
-      case "inspect":
-      case "logout":
-        return commands[topic];
-      default:
-        throw new Error(`unknown issuance command: ${topic}; run vault issuance --help`);
-    }
+    const text = new Map(Object.entries(commands)).get(topic);
+    if (text === undefined)
+      throw new Error(`unknown issuance command: ${topic}; run vault issuance --help`);
+    return text;
   }
   return `vault issuance <command>
 

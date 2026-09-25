@@ -1,5 +1,4 @@
 import * as v from "valibot";
-import { z } from "zod";
 import { VaultClient } from "../client.ts";
 import { startSecretCollection } from "../collection.ts";
 import { AgentTasks } from "./tasks.ts";
@@ -192,9 +191,7 @@ export class AgentRuntime {
     });
     const body = await providerJson(response);
     // The trusted proxy never reflects its injected bearer, including upstream echoes.
-    return z
-      .json()
-      .parse(JSON.parse(JSON.stringify(body).replaceAll(token, "[redacted]")));
+    return JSON.parse(JSON.stringify(body).replaceAll(token, "[redacted]"));
   }
   async cancel(taskId: string) {
     const current = this.tasks.get(taskId);

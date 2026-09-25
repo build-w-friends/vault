@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { Hono, type Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { html } from "hono/html";
@@ -5,8 +6,8 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import type { VaultCrypto } from "../crypto.ts";
 import { timingSafeStringEqual } from "../crypto.ts";
+import { randomSecretValue } from "../keys.ts";
 import { PolicyError } from "../policy.ts";
-import { CloudflareIssuer } from "./cloudflare.ts";
 import {
   id,
   loginStateSchema,
@@ -16,6 +17,7 @@ import {
 } from "./contracts.ts";
 import { IssuanceStore } from "./store.ts";
 import { IssuanceService } from "./service.ts";
+import type { Send } from "./provider-request.ts";
 
 type Environment = {
   Bindings: { DB: D1Database };
@@ -29,11 +31,6 @@ const cookieOptions = {
   sameSite: "Lax",
   path: "/",
 } as const;
-const nonce = () =>
-  Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) =>
-    b.toString(16).padStart(2, "0"),
-  ).join("");
-const localPath = z.string().regex(/^\/issuance\/(?:connect|approve)\/[a-f0-9-]{36}$/u);
 
 const deviceSchema = z
   .object({
@@ -137,7 +134,7 @@ function page(title: string, body: ReturnType<typeof html>) {
 
 export function issuanceRoutes(
   vaultCrypto: VaultCrypto,
-  send: typeof fetch = fetch,
+  send: Send = fetch,
   now = () => Date.now(),
 ) {
   const app = new Hono<Environment>();
@@ -151,8 +148,6 @@ export function issuanceRoutes(
       "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
     );
     c.header("X-Content-Type-Options", "nosniff");
-    if (Number(c.req.header("Content-Length") ?? "0") > 1000000)
-      throw new PolicyError(413, "request is too large");
     if (
       c.req.path === "/issuance/auth/login" ||
       c.req.path === "/issuance/devices" ||
@@ -161,19 +156,13 @@ export function issuanceRoutes(
       const key = await vaultCrypto.lookupHash(
         `${c.req.path}:${c.req.header("CF-Connecting-IP") ?? "local"}`,
       );
-      const limit = c.req.path.endsWith("/poll") ? 120 : 60;
-      const admitted = await c.env.DB.prepare(
-        "INSERT INTO issuance_limits VALUES (?, ?, 1) ON CONFLICT(key, window) DO UPDATE SET count = count + 1 WHERE count < ? RETURNING count",
-      )
-        .bind(key, Math.floor(now() / 60000), limit)
-        .first();
-      if (!admitted)
+      if (!(await c.get("issuance").admit(key, c.req.path.endsWith("/poll") ? 120 : 60)))
         throw new PolicyError(429, "too many sign-in requests; retry after one minute");
     }
     await next();
   });
   const service = (c: Context<Environment>) =>
-    new IssuanceService(c.get("issuance"), new CloudflareIssuer(send), send);
+    new IssuanceService(c.get("issuance"), send);
   const agent = (c: Context<Environment>) =>
     c
       .get("issuance")
@@ -215,10 +204,10 @@ export function issuanceRoutes(
 
   app.get("/auth/login", async (c) => {
     const store = c.get("issuance");
-    const returnTo = localPath.parse(c.req.query("returnTo"));
+    const returnTo = loginStateSchema.shape.returnTo.parse(c.req.query("returnTo"));
     const config = await store.identity();
-    const state = nonce();
-    const verifier = nonce();
+    const state = randomSecretValue();
+    const verifier = randomSecretValue();
     await store.putEphemeral(
       `github:${state}`,
       {
@@ -229,16 +218,9 @@ export function issuanceRoutes(
       600000,
     );
     setCookie(c, stateCookie, state, { ...cookieOptions, maxAge: 600 });
-    const challenge = btoa(
-      String.fromCharCode(
-        ...new Uint8Array(
-          await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)),
-        ),
-      ),
-    )
-      .replaceAll("=", "")
-      .replaceAll("+", "-")
-      .replaceAll("/", "_");
+    const challenge = Buffer.from(
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)),
+    ).toString("base64url");
     const params = new URLSearchParams({
       client_id: config.clientId,
       redirect_uri: `${config.origin}/issuance/auth/callback`,
@@ -299,14 +281,14 @@ export function issuanceRoutes(
       .safeParse(await response.json().catch(() => null));
     if (!response.ok || !user.success)
       throw new PolicyError(401, "GitHub identity could not be verified");
-    const session = nonce();
+    const session = randomSecretValue();
     await store.db
       .prepare("INSERT INTO issuance_auth VALUES (?, 'browser', ?, NULL, ?, ?, ?, NULL)")
       .bind(
         await vaultCrypto.sha256(session),
         String(user.data.id),
         user.data.login,
-        nonce(),
+        randomSecretValue(),
         now() + 8 * 3600000,
       )
       .run();

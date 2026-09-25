@@ -3,8 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { VaultClient } from "../src/client.ts";
-import { readConfig } from "../src/config.ts";
+import type { VaultClient } from "../src/client.ts";
 import {
   generateMasterKey,
   masterKeyFingerprint,
@@ -13,8 +12,10 @@ import {
 import { stripJsonComments } from "../src/jsonc.ts";
 import { secretsStoreSecretId } from "../src/operational-proofs.ts";
 import * as v from "valibot";
+import { operatorClient } from "./operator.ts";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+Bun.$.cwd(packageRoot);
 
 const slotSchema = v.picklist(["primary", "secondary"]);
 type Slot = v.InferOutput<typeof slotSchema>;
@@ -46,18 +47,15 @@ async function main(argv: readonly string[]): Promise<void> {
   if (binding === undefined) throw new Error("inactive Secrets Store binding is missing");
   const client = operatorClient();
   const before = await client.listMasterKeys();
-  const list = await command([
-    "bunx",
-    "wrangler",
-    "secrets-store",
-    "secret",
-    "list",
-    binding.store_id,
-    "--remote",
-    "--env",
-    "production",
-  ]);
-  const secretId = secretsStoreSecretId(list, binding.secret_name);
+  const list =
+    await Bun.$`bunx wrangler secrets-store secret list ${binding.store_id} --remote --env production`
+      .quiet()
+      .nothrow();
+  if (list.exitCode !== 0) throw new Error("wrangler failed");
+  const secretId = secretsStoreSecretId(
+    list.stdout.toString() + list.stderr.toString(),
+    binding.secret_name,
+  );
   const root = generateMasterKey();
   const expectedFingerprint = await masterKeyFingerprint(parseMasterKey(root));
   await updateSecretWithWrangler(binding.store_id, secretId, root);
@@ -84,9 +82,9 @@ async function main(argv: readonly string[]): Promise<void> {
       null,
       2,
     )}\n`,
+    // The timestamped path is new on every run, so the mode applies.
     { mode: 0o600 },
   );
-  chmodSync(receiptPath, 0o600);
   console.log(`prepared ${prepared.fingerprint} in ${inactiveSlot}`);
   console.log(`previous active ${before.activeFingerprint} in ${activeSlot}`);
   console.log(`rotation receipt ${receiptPath}`);
@@ -122,63 +120,25 @@ function parseConfiguration(): v.InferOutput<typeof configurationSchema> {
   return parsed.output;
 }
 
-function operatorClient(): VaultClient {
-  const config = readConfig();
-  if (config.apiUrl == null || config.apiKey == null) {
-    throw new Error("vault operator configuration is missing");
-  }
-  return new VaultClient(config.apiUrl, config.apiKey);
-}
-
 async function updateSecretWithWrangler(
   storeId: string,
   secretId: string,
   value: string,
 ): Promise<void> {
   // Root rotation is always an explicit human ceremony. `--value` is safe here
-  // because Bun spawns the logged-in Wrangler client directly: there is no
-  // shell command or history entry, and both output streams stay captured.
-  const child = Bun.spawn(
-    [
-      "bunx",
-      "wrangler",
-      "secrets-store",
-      "secret",
-      "update",
-      storeId,
-      "--secret-id",
-      secretId,
-      "--value",
-      value,
-      "--scopes",
-      "workers",
-      "--comment",
-      "Root of trust for isolated bwf-vault replacement candidate",
-      "--remote",
-    ],
-    { cwd: packageRoot, stdout: "pipe", stderr: "pipe" },
-  );
-  const [code, stdout, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]);
-  if (code !== 0) throw new Error(`Secrets Store update failed: ${stderr || stdout}`);
-}
-
-async function command(argv: readonly string[]): Promise<string> {
-  const child = Bun.spawn([...argv], {
-    cwd: packageRoot,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [code, stdout, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]);
-  if (code !== 0) throw new Error(`${argv[1] ?? argv[0]} failed`);
-  return `${stdout}${stderr}`;
+  // because Bun's built-in shell runs the logged-in Wrangler client directly and
+  // escapes every interpolated argument: no system shell or history entry sees
+  // the value, and both output streams stay captured.
+  const comment = "Root of trust for isolated bwf-vault replacement candidate";
+  const update =
+    await Bun.$`bunx wrangler secrets-store secret update ${storeId} --secret-id ${secretId} --value ${value} --scopes workers --comment ${comment} --remote`
+      .quiet()
+      .nothrow();
+  if (update.exitCode !== 0) {
+    throw new Error(
+      `Secrets Store update failed: ${update.stderr.toString() || update.stdout.toString()}`,
+    );
+  }
 }
 
 if (import.meta.main) {

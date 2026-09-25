@@ -3,11 +3,27 @@ import { spawn } from "node:child_process";
 import { buildCollectionAssets } from "./collection/assets.ts" with { type: "macro" };
 import { VaultClientError } from "./client.ts";
 import {
+  collectedSecretSchema,
   collectionTargetSchema,
   collectionReceiptSchema,
   type CollectionTarget,
 } from "./collection-contract.ts";
 const assets = buildCollectionAssets();
+
+/**
+ * Runs a save and returns the receipt state it settles in. Vault answers 409 when
+ * the name already exists; any other failure leaves the outcome unknown.
+ */
+export async function settle(save: () => Promise<void>) {
+  try {
+    await save();
+    return "stored" as const;
+  } catch (error) {
+    return error instanceof VaultClientError && error.status === 409
+      ? ("conflict" as const)
+      : ("unknown" as const);
+  }
+}
 
 /** One local, human-submitted request. No secret is returned or persisted locally. */
 export function startSecretCollection(input: {
@@ -90,10 +106,7 @@ export function startSecretCollection(input: {
       } catch {
         return new Response("Invalid input", { status: 400, headers });
       }
-      const parsed = v.safeParse(
-        v.strictObject({ value: v.pipe(v.string(), v.minLength(1), v.maxLength(16384)) }),
-        body,
-      );
+      const parsed = v.safeParse(v.pick(collectedSecretSchema, ["value"]), body);
       if (!parsed.success)
         return new Response("Enter a secret of 1–16384 characters.", {
           status: 400,
@@ -103,16 +116,7 @@ export function startSecretCollection(input: {
       if (state !== "waiting") return json();
       state = "saving";
       clearTimeout(timer);
-      try {
-        await input.save(parsed.output.value);
-        terminal("stored");
-      } catch (error) {
-        terminal(
-          error instanceof VaultClientError && error.status === 409
-            ? "conflict"
-            : "unknown",
-        );
-      }
+      terminal(await settle(() => input.save(parsed.output.value)));
       return json();
     },
     error() {
@@ -126,7 +130,6 @@ export function startSecretCollection(input: {
   return {
     url: `${origin}${path}`,
     completed,
-    receipt,
     stop() {
       if (state === "waiting") terminal("cancelled");
       else if (state === "saving") terminal("unknown");

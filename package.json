@@ -19,7 +19,7 @@
     "migrations:local": "wrangler d1 migrations apply DB --local",
     "migrations:production": "wrangler d1 migrations apply DB --remote --env production",
     "canary:oauth": "bun scripts/canary-oauth.ts",
-    "canary:posthog": "bun scripts/canary-posthog.ts posthog",
+    "canary:posthog": "bun scripts/canary-posthog.ts",
     "verify:providers": "bun scripts/verify-providers.ts",
     "recovery:rehearse": "bun scripts/recovery-rehearsal.ts",
     "master-keys:prepare-rotation": "bun scripts/rotate-master-key.ts prepare --yes",
@@ -36,7 +36,6 @@
   "dependencies": {
     "@clack/prompts": "latest",
     "@modelcontextprotocol/server": "latest",
-    "@tanstack/form-core": "1.33.5",
     "aws4fetch": "latest",
     "hono": "latest",
     "libsodium-wrappers": "latest",

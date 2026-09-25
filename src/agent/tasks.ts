@@ -24,7 +24,6 @@ const taskSchema = v.object({
   url: v.nullable(v.string()),
 });
 export type AgentTask = v.InferOutput<typeof taskSchema>;
-const rowSchema = v.nullable(v.object({ record: v.string() }));
 /** Only request metadata is persisted here. Provider values belong in Vault. */
 export class AgentTasks {
   private readonly db: Database;
@@ -64,15 +63,26 @@ export class AgentTasks {
       throw new Error("Request ID is already bound to another operation");
     return { task, created: change.changes === 1 };
   }
-  get(taskId: string): AgentTask {
-    const row = v.parse(
-      rowSchema,
-      this.db
-        .query("SELECT record FROM tasks WHERE id = ? OR request_id = ?")
-        .get(taskId, taskId),
-    );
+  /** Reads a task by task ID or request ID, with the stored record for compare-and-set. */
+  private row(taskId: string) {
+    const row = this.db
+      .query<{ record: string }, [string, string]>(
+        "SELECT record FROM tasks WHERE id = ? OR request_id = ?",
+      )
+      .get(taskId, taskId);
     if (!row) throw new Error("Task not found");
-    const task = v.parse(taskSchema, JSON.parse(row.record));
+    return { record: row.record, task: v.parse(taskSchema, JSON.parse(row.record)) };
+  }
+  /** Replaces the record only if it still equals `record`; true when it did. */
+  private swap(record: string, next: AgentTask) {
+    return (
+      this.db
+        .query("UPDATE tasks SET record = ? WHERE id = ? AND record = ?")
+        .run(JSON.stringify(next), next.taskId, record).changes === 1
+    );
+  }
+  get(taskId: string): AgentTask {
+    const { task } = this.row(taskId);
     if (
       (task.state === "waiting" || task.state === "saving") &&
       task.expiresAt <= this.now()
@@ -90,53 +100,32 @@ export class AgentTasks {
     to: AgentTask["state"],
     url: string | null = null,
   ): AgentTask {
-    const row = v.parse(
-      rowSchema,
-      this.db
-        .query("SELECT record FROM tasks WHERE id = ? OR request_id = ?")
-        .get(taskId, taskId),
-    );
-    if (!row) throw new Error("Task not found");
-    const task = v.parse(taskSchema, JSON.parse(row.record));
+    const { record, task } = this.row(taskId);
     if (task.state !== from) return task;
-    const next = {
+    this.swap(record, {
       ...task,
       state: to,
       url,
       updatedAt: this.now(),
       expiresAt: to === "saving" ? this.now() + 60000 : task.expiresAt,
-    };
-    this.db
-      .query("UPDATE tasks SET record = ? WHERE id = ? AND record = ?")
-      .run(JSON.stringify(next), task.taskId, row.record);
+    });
     return this.get(taskId);
   }
   claim(taskId: string): boolean {
     const task = this.get(taskId);
     if (task.state !== "waiting") return false;
-    const next = {
+    return this.swap(JSON.stringify(task), {
       ...task,
       state: "saving",
       url: null,
       updatedAt: this.now(),
       expiresAt: this.now() + 60000,
-    };
-    return (
-      this.db
-        .query("UPDATE tasks SET record = ? WHERE id = ? AND record = ?")
-        .run(JSON.stringify(next), task.taskId, JSON.stringify(task)).changes === 1
-    );
+    });
   }
   release(taskId: string) {
     const task = this.get(taskId);
     if (task.state !== "waiting" || task.ownerPid !== process.pid) return;
-    this.db
-      .query("UPDATE tasks SET record=? WHERE id=? AND record=?")
-      .run(
-        JSON.stringify({ ...task, ownerPid: 0, url: null }),
-        task.taskId,
-        JSON.stringify(task),
-      );
+    this.swap(JSON.stringify(task), { ...task, ownerPid: 0, url: null });
   }
   reclaim(taskId: string) {
     const task = this.get(taskId);
@@ -150,15 +139,7 @@ export class AgentTasks {
           return false;
       }
     }
-    return (
-      this.db
-        .query("UPDATE tasks SET record=? WHERE id=? AND record=?")
-        .run(
-          JSON.stringify({ ...task, ownerPid: process.pid, url: null }),
-          task.taskId,
-          JSON.stringify(task),
-        ).changes === 1
-    );
+    return this.swap(JSON.stringify(task), { ...task, ownerPid: process.pid, url: null });
   }
   close() {
     this.db.close();

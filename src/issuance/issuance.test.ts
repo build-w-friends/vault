@@ -1,12 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { PassThrough } from "node:stream";
 import { serveStdio, StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { apiRequestSchema } from "./contracts.ts";
-import { CloudflareIssuer } from "./cloudflare.ts";
 import { IssuanceService } from "./service.ts";
 import { authHeaders } from "../harness.ts";
+import { runIssuanceCli } from "./cli.ts";
 import { createIssuanceMcp, IssuanceClient } from "./mcp.ts";
 import { issuanceFixture, fixtureIds, fixturePlan } from "./fixture.ts";
 
@@ -329,26 +329,21 @@ describe("approved issuer credentials", () => {
       const session = await f.connect();
       const plan = await prepare(f, session);
       await approve(f, session, plan.requestId);
-      const provider = new CloudflareIssuer(
-        Object.assign(
-          async () =>
-            Response.json(
+      const service = new IssuanceService(f.store, async () =>
+        Response.json(
+          {
+            success: false,
+            result: { value: "synthetic-provider-secret" },
+            errors: [
               {
-                success: false,
-                result: { value: "synthetic-provider-secret" },
-                errors: [
-                  {
-                    code: 1001,
-                    message: "Policy rejected: synthetic-parent-never-export",
-                  },
-                ],
+                code: 1001,
+                message: "Policy rejected: synthetic-parent-never-export",
               },
-              { status },
-            ),
-          { preconnect: fetch.preconnect },
+            ],
+          },
+          { status },
         ),
       );
-      const service = new IssuanceService(f.store, provider);
       const outcome = status < 500 ? "rejected" : "unknown";
       await expectRejected(service.execute(session.auth, plan.requestId), outcome);
       const result = await service.view(await f.store.request(plan.requestId));
@@ -472,11 +467,8 @@ describe("approved issuer credentials", () => {
   test("MCP tools discover and prepare using the authenticated session, with no approve tool", async () => {
     const f = await issuanceFixture();
     const session = await f.connect();
-    const transport: typeof fetch = Object.assign(
-      async (input: RequestInfo | URL, init?: RequestInit) =>
-        f.app.fetch(new Request(input, init), f.env),
-      { preconnect: fetch.preconnect },
-    );
+    const transport = async (input: RequestInfo | URL, init?: RequestInit) =>
+      f.app.fetch(new Request(input, init), f.env);
     const client = new IssuanceClient("https://vault.test", session.token, transport);
     const handler = createMcpHandler(() => createIssuanceMcp(client));
     const rpc = async (method: string, params: z.infer<ReturnType<typeof z.json>>) => {
@@ -559,11 +551,8 @@ describe("approved issuer credentials", () => {
   test("the local stdio MCP transport completes a handshake and returns tenant issuers", async () => {
     const f = await issuanceFixture();
     const session = await f.connect();
-    const send: typeof fetch = Object.assign(
-      async (input: RequestInfo | URL, init?: RequestInit) =>
-        f.app.fetch(new Request(input, init), f.env),
-      { preconnect: fetch.preconnect },
-    );
+    const send = async (input: RequestInfo | URL, init?: RequestInit) =>
+      f.app.fetch(new Request(input, init), f.env);
     const input = new PassThrough();
     const output = new PassThrough();
     const transport = new StdioServerTransport(input, output);
@@ -640,5 +629,69 @@ describe("approved issuer credentials", () => {
         })
       ).status,
     ).toBe(404);
+  });
+});
+
+describe("issuance login polling", () => {
+  const deviceId = "00000000-0000-4000-8000-0000000000aa";
+  const io = { log: () => {}, error: () => {} };
+  /** Answers the device request, then each poll with the next scripted reply. */
+  function vault(polls: Array<() => Response>) {
+    let calls = 0;
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        async (input: RequestInfo | URL) => {
+          const url = new URL(input instanceof Request ? input.url : input);
+          if (url.pathname === "/issuance/devices")
+            return Response.json({
+              deviceId,
+              verificationUrl: `https://vault.test/issuance/connect/${deviceId}`,
+            });
+          const reply = polls[Math.min(calls++, polls.length - 1)];
+          if (!reply) throw new Error("no scripted poll reply");
+          return reply();
+        },
+        { preconnect: fetch.preconnect },
+      ),
+    );
+    const sleepSpy = spyOn(Bun, "sleep").mockResolvedValue(undefined);
+    return {
+      polls: () => calls,
+      [Symbol.dispose]: () => {
+        fetchSpy.mockRestore();
+        sleepSpy.mockRestore();
+      },
+    };
+  }
+  const lostReply = () => {
+    throw new TypeError("lost reply");
+  };
+
+  test("a lost reply or busy Vault is retried; a rejected verifier is not", async () => {
+    using server = vault([
+      lostReply,
+      () => new Response(null, { status: 503 }),
+      () => Response.json({ error: "invalid connection verifier" }, { status: 401 }),
+    ]);
+    await expectRejected(
+      runIssuanceCli(["login"], "https://vault.test", io),
+      "invalid connection verifier",
+    );
+    expect(server.polls()).toBe(3);
+  });
+
+  test("temporary failures stop at the ten-minute expiry", async () => {
+    using server = vault([lostReply]);
+    let clock = 0;
+    const now = spyOn(Date, "now").mockImplementation(() => (clock += 60000));
+    try {
+      await expectRejected(
+        runIssuanceCli(["login"], "https://vault.test", io),
+        "expired",
+      );
+    } finally {
+      now.mockRestore();
+    }
+    expect(server.polls()).toBeGreaterThan(1);
   });
 });

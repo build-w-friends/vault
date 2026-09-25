@@ -48,13 +48,13 @@ export type PushReport = {
   skipped: string[];
 };
 
-function pick(all: Record<string, string>, names: string[]) {
-  const out: Record<string, string> = {};
-  for (const name of names) {
-    const value = all[name];
-    if (value != null) out[name] = value;
+/** The named values, or an error naming every one the vault cannot supply. */
+function requireValues(all: Record<string, string>, names: string[], label: string) {
+  const missing = names.filter((name) => all[name] == null);
+  if (missing.length > 0) {
+    throw new Error(`vault missing names for ${label}: ${missing.join(", ")}`);
   }
-  return out;
+  return Object.fromEntries(names.map((name) => [name, all[name]!]));
 }
 
 export async function loadVaultValues(
@@ -63,13 +63,11 @@ export async function loadVaultValues(
   env: string,
 ): Promise<Record<string, string>> {
   const listed = await client.exportSecrets(project, env);
-  const values: Record<string, string> = {};
-  for (const secret of listed.secrets) {
-    if (secret.value != null && secret.value.length > 0) {
-      values[secret.name] = secret.value;
-    }
-  }
-  return values;
+  return Object.fromEntries(
+    listed.secrets
+      .filter((secret) => secret.value != null && secret.value.length > 0)
+      .map((secret) => [secret.name, secret.value]),
+  );
 }
 
 export async function pushDestinations(input: {
@@ -112,11 +110,7 @@ export async function pushDestinations(input: {
         scriptName: wrangler.name,
         token: cfToken,
       };
-      const values = pick(input.values, cloudflareNames);
-      const missing = cloudflareNames.filter((name) => values[name] == null);
-      if (missing.length > 0) {
-        throw new Error(`vault missing names for Cloudflare: ${missing.join(", ")}`);
-      }
+      const values = requireValues(input.values, cloudflareNames, "Cloudflare");
       // A push reconciles the Worker against `secrets.required`, so a name
       // retired from that list is deleted rather than left live. Only a full
       // push may do that: `--name` narrows what is written, and treating the
@@ -150,11 +144,11 @@ export async function pushDestinations(input: {
         throw new Error("trusted GitHub repository must match vault.json github.repo");
       }
       const target: GithubPushTarget = { repo: repository, token: ghToken };
-      const values = pick(input.githubValues ?? input.values, githubNames);
-      const missing = githubNames.filter((name) => values[name] == null);
-      if (missing.length > 0) {
-        throw new Error(`vault missing names for GitHub: ${missing.join(", ")}`);
-      }
+      const values = requireValues(
+        input.githubValues ?? input.values,
+        githubNames,
+        "GitHub",
+      );
       await pushGithubSecrets(target, values, fetchImpl);
       report.github = Object.keys(values);
     }

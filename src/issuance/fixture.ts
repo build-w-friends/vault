@@ -3,7 +3,6 @@ import { createTestVault, bootstrapUser, authHeaders } from "../harness.ts";
 import { adminSchema } from "./contracts.ts";
 import { IssuanceStore } from "./store.ts";
 import { IssuanceService } from "./service.ts";
-import { CloudflareIssuer } from "./cloudflare.ts";
 
 export const fixtureIds = {
   tenant: "00000000-0000-4000-8000-000000000001",
@@ -143,7 +142,7 @@ export async function issuanceFixture() {
   const vault = await createTestVault({ issuanceFetch: send, now: () => clock });
   const operator = await bootstrapUser(vault.app, vault.env);
   const store = new IssuanceStore(vault.env.DB, vault.crypto, () => clock);
-  const service = new IssuanceService(store, new CloudflareIssuer(send), send);
+  const service = new IssuanceService(store, send);
   const request = (path: string, init?: RequestInit) =>
     vault.app.request(`https://vault.test${path}`, init, vault.env);
   async function admin(body: z.infer<typeof adminSchema>) {

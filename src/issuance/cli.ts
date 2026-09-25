@@ -5,10 +5,10 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 import { resolveClientOptions } from "../config.ts";
 import { parseVaultApiUrl } from "../client.ts";
+import { randomSecretValue } from "../keys.ts";
 import { readSecretValue } from "../prompt.ts";
 import { connectCloudflare, setupIssuance, setupSchema } from "./connect-cloudflare.ts";
 import { PromptCancelledError, terminalPrompts } from "./terminal.ts";
-import { retryDevicePoll, TemporaryConnectionError } from "./device-poll.ts";
 import { issuanceHelp } from "./help.ts";
 import { adminSchema, id } from "./contracts.ts";
 import { createIssuanceMcp, IssuanceClient } from "./mcp.ts";
@@ -20,14 +20,11 @@ const configSchema = z.object({
   sessionId: z.string(),
 });
 const configPath = () => join(homedir(), ".config", "poc-vault", "issuance.json");
-const responseJsonSchema = z.json();
-type ResponseJson = z.infer<typeof responseJsonSchema>;
-function parseResponseJson(text: string): ResponseJson {
-  try {
-    return responseJsonSchema.parse(JSON.parse(text));
-  } catch {
-    return null;
-  }
+const okSchema = z.object({ ok: z.literal(true) });
+
+/** A failure worth retrying: the request did not reach Vault, or Vault was busy. */
+class TemporaryConnectionError extends Error {
+  override readonly name = "TemporaryConnectionError";
 }
 async function jsonRequest<T extends z.ZodType>(
   origin: string,
@@ -60,7 +57,12 @@ async function jsonRequest<T extends z.ZodType>(
     throw new Error(
       "This Vault server needs the guided-setup update deployed. Installing the CLI alone does not update the server.",
     );
-  const data = parseResponseJson(text);
+  let data: z.infer<ReturnType<typeof z.json>> = null;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    // A body that is not JSON stays null and fails the schema below.
+  }
   if (response.status === 429 || response.status >= 500)
     throw new TemporaryConnectionError(
       `Vault temporarily unavailable (HTTP ${response.status})`,
@@ -72,6 +74,19 @@ async function jsonRequest<T extends z.ZodType>(
     );
   }
   return schema.parse(data);
+}
+async function saveAdmin(
+  origin: string,
+  input: z.infer<typeof adminSchema>,
+  apiKey: string,
+) {
+  await jsonRequest(
+    origin,
+    "/v1/issuance/admin",
+    okSchema,
+    JSON.stringify(input),
+    apiKey,
+  );
 }
 export async function runIssuanceCli(
   args: string[],
@@ -110,13 +125,7 @@ export async function runIssuanceCli(
       "GET",
     );
     const save = async (input: z.infer<typeof adminSchema>) => {
-      await jsonRequest(
-        origin,
-        "/v1/issuance/admin",
-        z.object({ ok: z.literal(true) }),
-        JSON.stringify(input),
-        config.apiKey,
-      );
+      await saveAdmin(origin, input, config.apiKey);
     };
     try {
       if (command === "setup") await setupIssuance({ ui, setup, origin, save });
@@ -140,13 +149,7 @@ export async function runIssuanceCli(
         ),
       ),
     );
-    await jsonRequest(
-      parseVaultApiUrl(config.apiUrl).origin,
-      "/v1/issuance/admin",
-      z.object({ ok: z.literal(true) }),
-      JSON.stringify(input),
-      config.apiKey,
-    );
+    await saveAdmin(parseVaultApiUrl(config.apiUrl).origin, input, config.apiKey);
     io.log(`Vault issuance ${input.action} saved.`);
     return 0;
   }
@@ -166,26 +169,14 @@ export async function runIssuanceCli(
   }
   if (command === "login") {
     const origin = parseVaultApiUrl(apiUrl ?? args[1] ?? "").origin;
-    const verifier = Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) =>
-      b.toString(16).padStart(2, "0"),
-    ).join("");
-    const digest = await crypto.subtle.digest(
-      "SHA-256",
-      new TextEncoder().encode(verifier),
+    const verifier = randomSecretValue();
+    const challenge = new Bun.CryptoHasher("sha256").update(verifier).digest("hex");
+    const connection = await jsonRequest(
+      origin,
+      "/issuance/devices",
+      z.object({ deviceId: z.string().uuid(), verificationUrl: z.string().url() }),
+      JSON.stringify({ challenge, label: "Vault local MCP" }),
     );
-    const challenge = Array.from(new Uint8Array(digest), (b) =>
-      b.toString(16).padStart(2, "0"),
-    ).join("");
-    const connection = z
-      .object({ deviceId: z.string().uuid(), verificationUrl: z.string().url() })
-      .parse(
-        await jsonRequest(
-          origin,
-          "/issuance/devices",
-          z.json(),
-          JSON.stringify({ challenge, label: "Vault local MCP" }),
-        ),
-      );
     if (
       connection.verificationUrl !== `${origin}/issuance/connect/${connection.deviceId}`
     )
@@ -193,28 +184,25 @@ export async function runIssuanceCli(
     io.log(
       `Open ${connection.verificationUrl}\nVerify connection ID: ${connection.deviceId}`,
     );
+    const pollSchema = z.discriminatedUnion("status", [
+      z.object({ status: z.literal("pending") }),
+      configSchema.omit({ origin: true }).extend({ status: z.literal("connected") }),
+    ]);
     const deadline = Date.now() + 600000;
     while (Date.now() < deadline) {
-      await new Promise((resolve) => {
-        setTimeout(resolve, 5000);
-      });
-      const polled = z
-        .discriminatedUnion("status", [
-          z.object({ status: z.literal("pending") }),
-          configSchema.omit({ origin: true }).extend({ status: z.literal("connected") }),
-        ])
-        .parse(
-          await retryDevicePoll(
-            () =>
-              jsonRequest(
-                origin,
-                "/issuance/devices/poll",
-                z.json(),
-                JSON.stringify({ deviceId: connection.deviceId, verifier }),
-              ),
-            deadline,
-          ),
+      await Bun.sleep(5000);
+      let polled: z.infer<typeof pollSchema>;
+      try {
+        polled = await jsonRequest(
+          origin,
+          "/issuance/devices/poll",
+          pollSchema,
+          JSON.stringify({ deviceId: connection.deviceId, verifier }),
         );
+      } catch (error) {
+        if (error instanceof TemporaryConnectionError) continue;
+        throw error;
+      }
       if (polled.status === "pending") continue;
       const config = configSchema.parse({ ...polled, origin });
       const path = configPath();
@@ -255,7 +243,7 @@ export async function runIssuanceCli(
     await jsonRequest(
       config.origin,
       "/issuance/session/revoke",
-      z.object({ ok: z.literal(true) }),
+      okSchema,
       "{}",
       config.token,
     );

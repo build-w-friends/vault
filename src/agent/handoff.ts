@@ -1,10 +1,12 @@
 import { randomBytes, createHash } from "node:crypto";
 import * as v from "valibot";
 import { buildCollectionAssets } from "../collection/assets.ts" with { type: "macro" };
-import { VaultClientError } from "../client.ts";
+import { settle } from "../collection.ts";
 import { AgentTasks } from "./tasks.ts";
 import { cloudflareConfigSchema, exchangeCloudflare } from "./provider.ts";
 const assets = buildCollectionAssets();
+const approvalScript = assets.find((asset) => asset.name === "approval.js")?.content;
+const stylesheet = assets.find((asset) => asset.name.endsWith(".css"))?.content;
 const headers = {
   "Cache-Control": "no-store",
   "Referrer-Policy": "no-referrer",
@@ -12,18 +14,12 @@ const headers = {
   "Content-Security-Policy":
     "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
 };
-const escape = (value: string) =>
-  value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");
+const style = () =>
+  new Response(stylesheet, { headers: { ...headers, "Content-Type": "text/css" } });
 const page = (title: string, body: string, approval = false) =>
   new Response(
-    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(title)} · Vault</title><link rel="stylesheet" href="/style.css">${approval ? '<script type="module" src="/approval.js"></script>' : ""}</head><body><main><h1>${escape(title)}</h1>${body}</main></body></html>`,
-    {
-      headers: {
-        ...headers,
-        "Referrer-Policy": "no-referrer",
-        "Content-Type": "text/html; charset=utf-8",
-      },
-    },
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${Bun.escapeHTML(title)} · Vault</title><link rel="stylesheet" href="/style.css">${approval ? '<script type="module" src="/approval.js"></script>' : ""}</head><body><main><h1>${Bun.escapeHTML(title)}</h1>${body}</main></body></html>`,
+    { headers: { ...headers, "Content-Type": "text/html; charset=utf-8" } },
   );
 
 export function githubHandoff(input: {
@@ -48,21 +44,16 @@ export function githubHandoff(input: {
       )
         return new Response("Forbidden", { status: 403, headers });
       if (request.method === "GET" && url.pathname === "/approval.js")
-        return new Response(
-          assets.find((asset) => asset.name === "approval.js")?.content,
-          { headers: { ...headers, "Content-Type": "text/javascript" } },
-        );
-      if (url.pathname === "/style.css")
-        return new Response(
-          assets.find((asset) => asset.name.endsWith(".css"))?.content,
-          { headers: { ...headers, "Content-Type": "text/css" } },
-        );
+        return new Response(approvalScript, {
+          headers: { ...headers, "Content-Type": "text/javascript" },
+        });
+      if (url.pathname === "/style.css") return style();
       if (url.pathname !== path)
         return new Response("Not found", { status: 404, headers });
       if (request.method === "GET")
         return page(
           "Repository access",
-          `<p class="lede">Allow Vault to read <code>${escape(input.repository)}</code> for this task.</p><p>Contents and metadata only. Access expires within one hour. The agent receives a reference, never the token.</p><form id="approval"><div class="actions"><button name="decision" value="approve" disabled>Allow read access</button><button name="decision" value="cancel" disabled>Cancel</button></div></form><p id="result" role="status"></p><noscript>Enable JavaScript to submit your decision.</noscript>`,
+          `<p class="lede">Allow Vault to read <code>${Bun.escapeHTML(input.repository)}</code> for this task.</p><p>Contents and metadata only. Access expires within one hour. The agent receives a reference, never the token.</p><form id="approval"><div class="actions"><button name="decision" value="approve" disabled>Allow read access</button><button name="decision" value="cancel" disabled>Cancel</button></div></form><p id="result" role="status"></p><noscript>Enable JavaScript to submit your decision.</noscript>`,
           true,
         );
       if (request.method !== "POST" || request.headers.get("origin") !== origin)
@@ -70,20 +61,8 @@ export function githubHandoff(input: {
       const form = new URLSearchParams(await request.text());
       if (form.get("decision") === "cancel")
         input.tasks.transition(input.taskId, "waiting", "cancelled");
-      else if (form.get("decision") === "approve" && input.tasks.claim(input.taskId)) {
-        try {
-          await input.save();
-          input.tasks.transition(input.taskId, "saving", "stored");
-        } catch (error) {
-          input.tasks.transition(
-            input.taskId,
-            "saving",
-            error instanceof VaultClientError && error.status === 409
-              ? "conflict"
-              : "unknown",
-          );
-        }
-      }
+      else if (form.get("decision") === "approve" && input.tasks.claim(input.taskId))
+        input.tasks.transition(input.taskId, "saving", await settle(input.save));
       return Response.json({ state: input.tasks.get(input.taskId).state }, { headers });
     },
     error() {
@@ -139,10 +118,7 @@ export function cloudflareHandoff(input: {
         url.origin === redirect.origin &&
         url.pathname === "/style.css"
       )
-        return new Response(
-          assets.find((asset) => asset.name.endsWith(".css"))?.content,
-          { headers: { ...headers, "Content-Type": "text/css" } },
-        );
+        return style();
       if (
         request.method !== "GET" ||
         request.headers.get("host") !== redirect.host ||
@@ -160,26 +136,18 @@ export function cloudflareHandoff(input: {
       if (!code || code.length > 4096 || url.searchParams.getAll("code").length !== 1)
         return new Response("Invalid callback", { status: 400, headers });
       if (input.tasks.claim(input.taskId)) {
-        try {
+        const saved = await settle(async () => {
           const value = await exchangeCloudflare(
             { ...input.config, code, verifier },
             input.send,
           );
           await input.save(JSON.stringify(value));
-          input.tasks.transition(input.taskId, "saving", "stored");
-        } catch (error) {
-          input.tasks.transition(
-            input.taskId,
-            "saving",
-            error instanceof VaultClientError && error.status === 409
-              ? "conflict"
-              : "unknown",
-          );
-        }
+        });
+        input.tasks.transition(input.taskId, "saving", saved);
       }
       return page(
         "Connection result",
-        `<p role="status">${escape(input.tasks.get(input.taskId).state)}. Return to your agent.</p>`,
+        `<p role="status">${Bun.escapeHTML(input.tasks.get(input.taskId).state)}. Return to your agent.</p>`,
       );
     },
     error() {

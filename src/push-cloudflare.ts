@@ -17,29 +17,19 @@ type CloudflareBulkBodyResult = {
 /** Creates, updates and deletes share one request's allowance. */
 const CLOUDFLARE_BULK_OPERATION_LIMIT = 100;
 
-const cloudflareSecretEntryParser = z.union([
+const cloudflareSecretName = z.union([
   z.string(),
-  z.preprocess(
-    (value) => (Array.isArray(value) ? Object.create(value) : value),
-    z.object({ name: z.string() }).transform((entry) => entry.name),
-  ),
+  z.object({ name: z.string() }).transform((entry) => entry.name),
 ]);
-const cloudflareListingParser = z.preprocess(
-  (value) => (Array.isArray(value) ? Object.create(value) : value),
-  z.looseObject({
+/** A Workers script secrets listing, parsed to its secret names. */
+export const cloudflareSecretListing = z
+  .object({
     result: z.union([
-      z.array(cloudflareSecretEntryParser),
-      z.looseObject({ secrets: z.array(cloudflareSecretEntryParser) }),
+      z.array(cloudflareSecretName),
+      z.object({ secrets: z.array(cloudflareSecretName) }).transform((r) => r.secrets),
     ]),
-  }),
-);
-const cloudflareListingNamesParser = cloudflareListingParser
-  .transform((listing) => {
-    const rows = Array.isArray(listing.result) ? listing.result : listing.result.secrets;
-    return rows;
   })
-  .nullable()
-  .catch(null);
+  .transform((listing) => listing.result);
 
 /**
  * The merge-patch body. A name mapped to `null` is deleted, which is what
@@ -79,10 +69,6 @@ export function cloudflareSecretsToRetire(
   return live.filter((name) => !keep.has(name));
 }
 
-export const namesFromCloudflareListing = cloudflareListingNamesParser.parse.bind(
-  cloudflareListingNamesParser,
-);
-
 export async function listCloudflareSecretNames(
   target: CloudflarePushTarget,
   fetchImpl: FetchLike = fetch,
@@ -95,9 +81,9 @@ export async function listCloudflareSecretNames(
   if (!response.ok) {
     throw new Error(`Cloudflare secret list failed: ${response.status}`);
   }
-  const names = namesFromCloudflareListing(body);
-  if (names == null) throw new Error("Cloudflare secret list was unreadable");
-  return names;
+  const names = cloudflareSecretListing.safeParse(body);
+  if (!names.success) throw new Error("Cloudflare secret list was unreadable");
+  return names.data;
 }
 
 export async function pushCloudflareSecrets(

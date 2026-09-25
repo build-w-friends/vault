@@ -33,17 +33,18 @@ export class MasterKeyError extends Error {
 }
 
 export function generateMasterKey(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(MASTER_KEY_BYTES));
-  return encodeBase64(bytes);
+  return crypto.getRandomValues(new Uint8Array(MASTER_KEY_BYTES)).toBase64();
 }
 
-export function parseMasterKey(value: string | undefined): Uint8Array {
+type Bytes = Uint8Array<ArrayBuffer>;
+
+export function parseMasterKey(value: string | undefined): Bytes {
   if (value == null || value.length === 0) {
     throw new MasterKeyError("MASTER_KEY is required");
   }
-  let bytes: Uint8Array;
+  let bytes: Bytes;
   try {
-    bytes = decodeBase64(value.trim());
+    bytes = Uint8Array.fromBase64(value.trim());
   } catch {
     throw new MasterKeyError("MASTER_KEY must be standard base64");
   }
@@ -55,14 +56,10 @@ export function parseMasterKey(value: string | undefined): Uint8Array {
 
 export class VaultCrypto {
   private constructor(
-    private readonly dataKey: Uint8Array,
+    private readonly dataKey: Bytes,
     private readonly encryptionKey: CryptoKey,
     private readonly hmacKey: CryptoKey,
   ) {}
-
-  static async fromMasterKey(masterKey: string | undefined): Promise<VaultCrypto> {
-    return VaultCrypto.fromDataKey(parseMasterKey(masterKey));
-  }
 
   static async generate(): Promise<VaultCrypto> {
     return VaultCrypto.fromDataKey(
@@ -128,28 +125,13 @@ export class VaultCrypto {
   }
 
   async encrypt(plaintext: string): Promise<string> {
-    const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
-    const ciphertext = await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv },
-      this.encryptionKey,
-      new TextEncoder().encode(plaintext),
-    );
-    const combined = new Uint8Array(iv.byteLength + ciphertext.byteLength);
-    combined.set(iv, 0);
-    combined.set(new Uint8Array(ciphertext), iv.byteLength);
-    return encodeBase64(combined);
+    return seal(this.encryptionKey, new TextEncoder().encode(plaintext));
   }
 
   async decrypt(stored: string): Promise<string> {
-    const raw = decodeBase64(stored);
-    const iv = raw.slice(0, IV_LENGTH);
-    const ciphertext = raw.slice(IV_LENGTH);
-    const decrypted = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv },
-      this.encryptionKey,
-      ciphertext,
+    return new TextDecoder().decode(
+      await open(this.encryptionKey, Uint8Array.fromBase64(stored)),
     );
-    return new TextDecoder().decode(decrypted);
   }
 
   async lookupHash(name: string): Promise<string> {
@@ -158,18 +140,18 @@ export class VaultCrypto {
       this.hmacKey,
       new TextEncoder().encode(name),
     );
-    return toHex(sig);
+    return new Uint8Array(sig).toHex();
   }
 
   async sha256(input: string): Promise<string> {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
-    return toHex(digest);
+    return new Uint8Array(digest).toHex();
   }
 }
 
-export async function masterKeyFingerprint(masterKey: Uint8Array): Promise<string> {
+export async function masterKeyFingerprint(masterKey: Bytes): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", masterKey);
-  return toHex(digest).slice(0, 32);
+  return new Uint8Array(digest).toHex().slice(0, 32);
 }
 
 export async function timingSafeStringEqual(
@@ -190,59 +172,44 @@ export async function timingSafeStringEqual(
   return different === 0;
 }
 
-async function rootEncryptionKey(masterKey: Uint8Array): Promise<CryptoKey> {
+async function rootEncryptionKey(masterKey: Bytes): Promise<CryptoKey> {
   return crypto.subtle.importKey("raw", masterKey, "AES-GCM", false, [
     "encrypt",
     "decrypt",
   ]);
 }
 
-async function wrapDataKey(masterKey: Uint8Array, dataKey: Uint8Array): Promise<string> {
+/** AES-GCM with a fresh IV, stored as base64 of `iv || ciphertext`. */
+async function seal(key: CryptoKey, plaintext: BufferSource): Promise<string> {
   const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
-  const wrapped = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    await rootEncryptionKey(masterKey),
-    dataKey,
-  );
-  const combined = new Uint8Array(iv.byteLength + wrapped.byteLength);
+  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext);
+  const combined = new Uint8Array(IV_LENGTH + ciphertext.byteLength);
   combined.set(iv, 0);
-  combined.set(new Uint8Array(wrapped), iv.byteLength);
-  return encodeBase64(combined);
+  combined.set(new Uint8Array(ciphertext), IV_LENGTH);
+  return combined.toBase64();
 }
 
-async function unwrapDataKey(masterKey: Uint8Array, stored: string): Promise<Uint8Array> {
-  const raw = decodeBase64(stored);
+/** Reverses `seal` for already-decoded `iv || ciphertext` bytes. */
+function open(key: CryptoKey, raw: Bytes): Promise<ArrayBuffer> {
+  return crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: raw.slice(0, IV_LENGTH) },
+    key,
+    raw.slice(IV_LENGTH),
+  );
+}
+
+async function wrapDataKey(masterKey: Bytes, dataKey: Bytes): Promise<string> {
+  return seal(await rootEncryptionKey(masterKey), dataKey);
+}
+
+async function unwrapDataKey(masterKey: Bytes, stored: string): Promise<Bytes> {
+  const raw = Uint8Array.fromBase64(stored);
   if (raw.byteLength <= IV_LENGTH) {
     throw new MasterKeyError("wrapped vault data key is malformed");
   }
   try {
-    const decrypted = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: raw.slice(0, IV_LENGTH) },
-      await rootEncryptionKey(masterKey),
-      raw.slice(IV_LENGTH),
-    );
-    return new Uint8Array(decrypted);
+    return new Uint8Array(await open(await rootEncryptionKey(masterKey), raw));
   } catch {
     throw new MasterKeyError("MASTER_KEY does not unwrap this vault");
   }
-}
-
-function encodeBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
-function decodeBase64(value: string): Uint8Array {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
-function toHex(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let hex = "";
-  for (const byte of bytes) hex += byte.toString(16).padStart(2, "0");
-  return hex;
 }

@@ -14,21 +14,10 @@ export type GithubPushTarget = {
   token: string;
 };
 
-const githubListingParser = z.preprocess(
-  (value) => (Array.isArray(value) ? Object.create(value) : value),
-  z.object({
-    secrets: z.array(
-      z.preprocess(
-        (value) => (Array.isArray(value) ? Object.create(value) : value),
-        z.object({ name: z.string() }),
-      ),
-    ),
-  }),
-);
-const githubListingNamesParser = githubListingParser
-  .transform((listing) => listing.secrets.map((entry) => entry.name))
-  .nullable()
-  .catch(null);
+/** An Actions secrets listing, parsed to its secret names. */
+export const githubSecretListing = z
+  .object({ secrets: z.array(z.object({ name: z.string() })) })
+  .transform((listing) => listing.secrets.map((entry) => entry.name));
 const githubPublicKeyParser = z.object({ key: z.string(), key_id: z.string() });
 
 export async function encryptGithubSecret(
@@ -41,35 +30,22 @@ export async function encryptGithubSecret(
   return sodium.to_base64(sealed, sodium.base64_variants.ORIGINAL);
 }
 
-async function githubJson(
+function githubFetch(
   url: string,
   token: string,
   init: RequestInit = {},
   fetchImpl: FetchLike = fetch,
-): Promise<{ status: number; body: unknown }> {
+): Promise<Response> {
   const headers = new Headers({
     Accept: "application/vnd.github+json",
     Authorization: `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
   });
-  if (init.headers != null) {
-    const extra = new Headers(init.headers);
-    extra.forEach((value, name) => {
-      headers.set(name, value);
-    });
-  }
-  const response = await fetchImpl(url, {
-    ...init,
-    headers,
+  new Headers(init.headers).forEach((value, name) => {
+    headers.set(name, value);
   });
-  const text = await response.text();
-  const body: unknown = text.length > 0 ? JSON.parse(text) : {};
-  return { status: response.status, body };
+  return fetchImpl(url, { ...init, headers });
 }
-
-export const namesFromGithubListing = githubListingNamesParser.parse.bind(
-  githubListingNamesParser,
-);
 
 export async function listGithubSecretNames(
   target: GithubPushTarget,
@@ -77,18 +53,16 @@ export async function listGithubSecretNames(
 ): Promise<string[]> {
   const parsed = githubOwnerRepo(target.repo);
   if (parsed == null) throw new Error(`invalid github.repo: ${target.repo}`);
-  const { status, body } = await githubJson(
+  const response = await githubFetch(
     `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/actions/secrets`,
     target.token,
     {},
     fetchImpl,
   );
-  if (status < 200 || status >= 300) {
-    throw new Error(`GitHub secret list failed: ${status}`);
-  }
-  const names = namesFromGithubListing(body);
-  if (names == null) throw new Error("GitHub secret list was unreadable");
-  return names;
+  if (!response.ok) throw new Error(`GitHub secret list failed: ${response.status}`);
+  const names = githubSecretListing.safeParse(await response.json().catch(() => null));
+  if (!names.success) throw new Error("GitHub secret list was unreadable");
+  return names.data;
 }
 
 export async function pushGithubSecrets(
@@ -98,22 +72,22 @@ export async function pushGithubSecrets(
 ): Promise<void> {
   const parsed = githubOwnerRepo(target.repo);
   if (parsed == null) throw new Error(`invalid github.repo: ${target.repo}`);
-  const keyResponse = await githubJson(
+  const keyResponse = await githubFetch(
     `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/actions/secrets/public-key`,
     target.token,
     {},
     fetchImpl,
   );
-  if (keyResponse.status < 200 || keyResponse.status >= 300) {
-    throw new Error(`GitHub public key failed: ${keyResponse.status}`);
-  }
-  const keyBody = githubPublicKeyParser.safeParse(keyResponse.body);
+  if (!keyResponse.ok) throw new Error(`GitHub public key failed: ${keyResponse.status}`);
+  const keyBody = githubPublicKeyParser.safeParse(
+    await keyResponse.json().catch(() => null),
+  );
   if (!keyBody.success) {
     throw new Error("GitHub public key was unreadable");
   }
   for (const [name, value] of Object.entries(values)) {
     const encrypted_value = await encryptGithubSecret(value, keyBody.data.key);
-    const put = await githubJson(
+    const put = await githubFetch(
       `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/actions/secrets/${encodeURIComponent(name)}`,
       target.token,
       {

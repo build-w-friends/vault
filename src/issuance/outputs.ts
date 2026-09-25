@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { PolicyError } from "../policy.ts";
 import { secretReferenceSchema } from "./contracts.ts";
-import type { Auth } from "./contracts.ts";
+import type { ApiRequest, Auth } from "./contracts.ts";
 import type { IssuanceStore } from "./store.ts";
 
 type Json = z.infer<ReturnType<typeof z.json>>;
@@ -40,7 +40,7 @@ function publicValue(
   if ((pointer === "" || field === "result") && typeof value === "string")
     return { $vaultSecret: { outputId, pointer } };
   return typeof value === "string"
-    ? redactions.reduce((text, secret) => text.split(secret).join("[REDACTED]"), value)
+    ? redactions.reduce((text, secret) => text.replaceAll(secret, "[REDACTED]"), value)
     : value;
 }
 export async function saveOutput(
@@ -68,6 +68,19 @@ export async function saveOutput(
       "output storage limit reached; inspect request status and the resource before repeating a mutation",
     );
   return outputId;
+}
+/** Saves a request's output and points the request at it. */
+export async function recordOutput(
+  store: IssuanceStore,
+  requestId: string,
+  result: { status: number; body: Json },
+  redactions: string[] = [],
+) {
+  const outputId = await saveOutput(store, requestId, result, redactions);
+  await store.db
+    .prepare("UPDATE issuance_requests SET output_id = ? WHERE id = ?")
+    .bind(outputId, requestId)
+    .run();
 }
 async function readOutput(store: IssuanceStore, outputId: string) {
   const row = await store.db
@@ -125,14 +138,8 @@ export async function resolveSecrets(
         !Object.hasOwn(resolved, key)
       )
         throw new PolicyError(400, "secret reference does not exist");
-      const object = z
-        .record(z.string(), z.json())
-        .parse(
-          Array.isArray(resolved)
-            ? Object.fromEntries(resolved.map((entry, index) => [String(index), entry]))
-            : resolved,
-        );
-      resolved = object[key] ?? null;
+      // Entries, not resolved[key]: an array owns "length", which is not an element.
+      resolved = new Map(Object.entries(resolved)).get(key) ?? null;
     }
     const remember = (entry: Json): void => {
       if (typeof entry === "string" && entry.length > 0) secrets.add(entry);
@@ -154,4 +161,20 @@ export async function resolveSecrets(
       ),
     );
   return value;
+}
+/** Resolves `$vaultSecret` references in a JSON request body, adding each value to `secrets`. */
+export async function resolveRequest(
+  store: IssuanceStore,
+  auth: Auth,
+  request: ApiRequest,
+  secrets: Set<string>,
+): Promise<ApiRequest> {
+  if (request.body.kind !== "json") return request;
+  return {
+    ...request,
+    body: {
+      kind: "json",
+      value: await resolveSecrets(store, auth, request.body.value, secrets),
+    },
+  };
 }

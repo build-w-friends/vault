@@ -10,16 +10,12 @@ import { AgentRuntime } from "./runtime.ts";
 import type { AgentTask } from "./tasks.ts";
 import {
   capabilitySchema,
-  registerTaskProtocol,
-  parseTaskCapability,
+  declinedSchema,
+  hasTaskCapability,
+  taskExtension,
   taskHandle,
 } from "./task-protocol.ts";
 const requestSchema = z.object({ requestId: z.string().uuid() }).strict();
-const envelopeSchema = z.object({
-  [CLIENT_CAPABILITIES_META_KEY]: z
-    .object({ elicitation: z.object({ url: z.object({}).optional() }).optional() })
-    .optional(),
-});
 const result = (data: z.infer<ReturnType<typeof z.json>>) => ({
   content: [{ type: "text" as const, text: JSON.stringify(data) }],
 });
@@ -32,19 +28,14 @@ export function createAgentMcp(runtime: AgentRuntime) {
     },
   );
   const parsePrompt = async (task: AgentTask, ctx: ServerContext) => {
-    const decline = v.safeParse(
-      v.object({ vault: v.object({ action: v.picklist(["decline", "cancel"]) }) }),
-      ctx.mcpReq.inputResponses,
-    );
-    if (decline.success) return result(await runtime.cancel(task.taskId));
+    if (v.is(declinedSchema, ctx.mcpReq.inputResponses))
+      return result(await runtime.cancel(task.taskId));
     const envelope = v.parse(capabilitySchema, ctx.mcpReq.envelope ?? {});
-    if (parseTaskCapability(envelope)) return taskHandle(task);
-    const parsed = envelopeSchema.safeParse(envelope);
+    if (hasTaskCapability(envelope)) return taskHandle(task);
     if (
       task.state === "waiting" &&
       task.url &&
-      parsed.success &&
-      parsed.data[CLIENT_CAPABILITIES_META_KEY]?.elicitation?.url
+      envelope[CLIENT_CAPABILITIES_META_KEY]?.elicitation?.url
     )
       return inputRequired({
         inputRequests: {
@@ -142,6 +133,6 @@ export function createAgentMcp(runtime: AgentRuntime) {
       }
     },
   );
-  registerTaskProtocol(server);
+  server.server.registerCapabilities({ extensions: { [taskExtension]: {} } });
   return server;
 }

@@ -15,7 +15,7 @@
  */
 import type { Context } from "hono";
 
-import { StoreError, VaultStore } from "./db.ts";
+import { VaultStore } from "./db.ts";
 import { randomSecretValue } from "./keys.ts";
 import { PolicyError, assertCanWrite, assertScope } from "./policy.ts";
 import type { ApiKeyRecord } from "./types.ts";
@@ -240,7 +240,7 @@ export async function handleMcp(
     }
     return error(-32601, `unknown tool ${name}`);
   } catch (caught) {
-    if (caught instanceof PolicyError || caught instanceof StoreError) {
+    if (caught instanceof PolicyError) {
       return error(-32000, caught.message);
     }
     console.error(

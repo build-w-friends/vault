@@ -1,5 +1,4 @@
 import {
-  McpServer,
   inputRequired,
   CLIENT_CAPABILITIES_META_KEY,
   type Transport,
@@ -7,7 +6,7 @@ import {
 import * as v from "valibot";
 import type { AgentTask } from "./tasks.ts";
 import type { AgentRuntime } from "./runtime.ts";
-const taskExtension = "io.modelcontextprotocol/tasks";
+export const taskExtension = "io.modelcontextprotocol/tasks";
 export const capabilitySchema = v.object({
   [CLIENT_CAPABILITIES_META_KEY]: v.optional(
     v.object({
@@ -16,14 +15,14 @@ export const capabilitySchema = v.object({
     }),
   ),
 });
-export function parseTaskCapability(envelope: v.InferOutput<typeof capabilitySchema>) {
-  const parsed = v.safeParse(capabilitySchema, envelope);
-  return (
-    parsed.success &&
-    Object.hasOwn(
-      parsed.output[CLIENT_CAPABILITIES_META_KEY]?.extensions ?? {},
-      taskExtension,
-    )
+/** An `inputResponses` value in which the user declined or cancelled the URL elicitation. */
+export const declinedSchema = v.object({
+  vault: v.object({ action: v.picklist(["decline", "cancel"]) }),
+});
+export function hasTaskCapability(envelope: v.InferOutput<typeof capabilitySchema>) {
+  return Object.hasOwn(
+    envelope[CLIENT_CAPABILITIES_META_KEY]?.extensions ?? {},
+    taskExtension,
   );
 }
 function taskView(task: AgentTask) {
@@ -67,21 +66,19 @@ function taskView(task: AgentTask) {
   return base;
 }
 export function taskHandle(task: AgentTask) {
-  const view = taskView(task);
+  const { taskId, status, createdAt, lastUpdatedAt, ttlMs, pollIntervalMs } =
+    taskView(task);
   // content satisfies the SDK's generic result envelope; task clients use the discriminator.
   return {
     resultType: "task",
     content: [],
-    taskId: view.taskId,
-    status: view.status,
-    createdAt: view.createdAt,
-    lastUpdatedAt: view.lastUpdatedAt,
-    ttlMs: null,
-    pollIntervalMs: 2000,
+    taskId,
+    status,
+    createdAt,
+    lastUpdatedAt,
+    ttlMs,
+    pollIntervalMs,
   };
-}
-export function registerTaskProtocol(server: McpServer) {
-  server.server.registerCapabilities({ extensions: { [taskExtension]: {} } });
 }
 const taskMessageSchema = v.object({
   jsonrpc: v.literal("2.0"),
@@ -116,30 +113,18 @@ export function taskTransport(inner: Transport, runtime: AgentRuntime): Transpor
         }
         void (async () => {
           if (!("id" in message)) return;
+          const reply = (code: number, text: string) =>
+            inner.send({
+              jsonrpc: "2.0",
+              id: message.id,
+              error: { code, message: text },
+            });
           const parsed = v.safeParse(taskMessageSchema, message);
-          if (!parsed.success) {
-            await inner.send({
-              jsonrpc: "2.0",
-              id: message.id,
-              error: { code: -32602, message: "Invalid MCP Tasks request" },
-            });
-            return;
-          }
-          if (!parseTaskCapability(parsed.output.params["_meta"])) {
-            await inner.send({
-              jsonrpc: "2.0",
-              id: message.id,
-              error: { code: -32021, message: "MCP Tasks capability is required" },
-            });
-            return;
-          }
+          if (!parsed.success) return reply(-32602, "Invalid MCP Tasks request");
+          if (!hasTaskCapability(parsed.output.params["_meta"]))
+            return reply(-32021, "MCP Tasks capability is required");
           try {
-            const declined = v.safeParse(
-              v.object({
-                vault: v.object({ action: v.picklist(["decline", "cancel"]) }),
-              }),
-              parsed.output.params.inputResponses,
-            ).success;
+            const declined = v.is(declinedSchema, parsed.output.params.inputResponses);
             const task =
               message.method === "tasks/cancel" ||
               (message.method === "tasks/update" && declined)
@@ -161,11 +146,7 @@ export function taskTransport(inner: Transport, runtime: AgentRuntime): Transpor
               },
             });
           } catch {
-            await inner.send({
-              jsonrpc: "2.0",
-              id: message.id,
-              error: { code: -32602, message: "Task unavailable" },
-            });
+            await reply(-32602, "Task unavailable");
           }
         })().catch(() => transport.onerror?.(new Error("Vault task transport failed")));
       };

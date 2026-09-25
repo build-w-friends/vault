@@ -12,13 +12,14 @@ import {
   issuanceResponseSchema,
   type IssuanceResponse,
 } from "./contracts.ts";
+import type { Send } from "./provider-request.ts";
 
 export class IssuanceClient {
   readonly origin: string;
   constructor(
     origin: string,
     private readonly token: string,
-    private readonly send: typeof fetch = fetch,
+    private readonly send: Send = fetch,
   ) {
     this.origin = parseVaultApiUrl(origin).origin;
   }

@@ -42,11 +42,10 @@ export async function loadRequiredSecretValues(
   input: InjectInput,
 ): Promise<Record<string, string>> {
   const repo = loadRepoContext(input.cwd);
-  const selection: Parameters<typeof resolveWranglerEnvironment>[1] = {
+  const wrangler = resolveWranglerEnvironment(repo, {
     vaultEnv: input.env,
-  };
-  if (input.wranglerEnv != null) selection.wranglerEnv = input.wranglerEnv;
-  const wrangler = resolveWranglerEnvironment(repo, selection);
+    wranglerEnv: input.wranglerEnv,
+  });
   const required = wrangler?.required ?? [];
   if (required.length === 0) {
     throw new InjectError(
@@ -70,16 +69,4 @@ export async function loadRequiredSecretValues(
     );
   }
   return values;
-}
-
-export function applyProcessEnv(values: Record<string, string>): void {
-  for (const [name, value] of Object.entries(values)) {
-    process.env[name] = value;
-  }
-}
-
-export async function injectRequiredIntoProcess(input: InjectInput): Promise<string[]> {
-  const values = await loadRequiredSecretValues(input);
-  applyProcessEnv(values);
-  return Object.keys(values);
 }

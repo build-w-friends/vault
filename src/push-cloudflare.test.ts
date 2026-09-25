@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   cloudflareBulkBody,
   cloudflareSecretsToRetire,
-  namesFromCloudflareListing,
+  cloudflareSecretListing,
   pushCloudflareSecrets,
 } from "./push-cloudflare.ts";
 
@@ -18,7 +18,7 @@ describe("cloudflare push", () => {
 
   test("reads names from a script secrets listing", () => {
     expect(
-      namesFromCloudflareListing({
+      cloudflareSecretListing.parse({
         result: [
           { name: "API_KEY", type: "secret_text" },
           { name: "OTHER", type: "secret_text" },

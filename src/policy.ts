@@ -22,6 +22,11 @@
 import type { ApiKeyRecord, SecretKind } from "./types.ts";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 
+/**
+ * An error that carries the HTTP status it should surface as. Policy checks,
+ * `VaultStore`, and `VaultKeyring` all throw it, and `app.ts` answers it with
+ * `{ error: message }` and that status.
+ */
 export class PolicyError extends Error {
   readonly status: ContentfulStatusCode;
   constructor(status: ContentfulStatusCode, message: string) {
@@ -31,11 +36,8 @@ export class PolicyError extends Error {
   }
 }
 
-export function canManageKeys(key: ApiKeyRecord): boolean {
-  return key.type === "user";
-}
-
-export function canManageProjects(key: ApiKeyRecord): boolean {
+/** Operators (user keys) manage keys, projects, audit, and master keys. */
+export function isOperator(key: ApiKeyRecord): boolean {
   return key.type === "user";
 }
 
@@ -73,18 +75,6 @@ export function assertCanDecrypt(key: ApiKeyRecord): void {
 
 export function assertCanWrite(key: ApiKeyRecord): void {
   if (!canWriteSecrets(key)) throw new PolicyError(403, "API key cannot write secrets");
-}
-
-export function valueVisibleOnList(
-  key: ApiKeyRecord,
-  kind: SecretKind,
-  show: boolean,
-): boolean {
-  if (!show) return false;
-  if (!canDecryptValues(key)) return false;
-  if (kind === "sealed") return false;
-  if (kind === "config") return true;
-  return key.type === "user";
 }
 
 export function valueVisibleOnGet(key: ApiKeyRecord, kind: SecretKind): boolean {

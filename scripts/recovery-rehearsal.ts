@@ -21,6 +21,7 @@ import * as v from "valibot";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const sourceConfigPath = join(packageRoot, "wrangler.jsonc");
+Bun.$.cwd(packageRoot);
 const project = "bwf-shadow";
 const canaryEnvironment = "prod-worker";
 const canarySecret = "POSTHOG_PROJECT_TOKEN";
@@ -45,37 +46,19 @@ async function main(): Promise<void> {
   const timeTravelPath = join(evidenceDirectory, "time-travel.json");
   const exportPath = join(evidenceDirectory, "bwf-vault.sql");
 
-  const timeTravel = await command([
-    "bunx",
-    "wrangler",
-    "d1",
-    "time-travel",
-    "info",
-    "DB",
-    "--env",
-    "production",
-    "--json",
-  ]);
+  const timeTravel = await captured(
+    Bun.$`bunx wrangler d1 time-travel info DB --env production --json`,
+  );
+  // The evidence directory is timestamped per run, so the file is new and the mode applies.
   writeFileSync(timeTravelPath, timeTravel, { mode: 0o600 });
-  chmodSync(timeTravelPath, 0o600);
-  await command([
-    "bunx",
-    "wrangler",
-    "d1",
-    "export",
-    "DB",
-    "--env",
-    "production",
-    "--remote",
-    "--skip-confirmation",
-    "--output",
-    exportPath,
-  ]);
+  await captured(
+    Bun.$`bunx wrangler d1 export DB --env production --remote --skip-confirmation --output ${exportPath}`,
+  );
   chmodSync(exportPath, 0o600);
   console.log("PASS  production Time Travel bookmark and encrypted export captured");
 
+  // mkdtemp creates the directory with mode 0700.
   const temporaryDirectory = mkdtempSync(join(tmpdir(), "bwf-vault-recovery-"));
-  chmodSync(temporaryDirectory, 0o700);
   const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
   const databaseName = `bwf-vault-recovery-${suffix}`;
   const workerName = `bwf-vault-recovery-${suffix}`;
@@ -84,34 +67,19 @@ async function main(): Promise<void> {
   let workerCreated = false;
   const cleanupFailures: string[] = [];
   try {
-    await command(["bunx", "wrangler", "d1", "create", databaseName]);
+    await captured(Bun.$`bunx wrangler d1 create ${databaseName}`);
     databaseId = d1DatabaseIdFromListOutput(
-      await command(["bunx", "wrangler", "d1", "list", "--json"]),
+      await captured(Bun.$`bunx wrangler d1 list --json`),
       databaseName,
     );
     writeTemporaryConfig(temporaryConfigPath, workerName, databaseName, databaseId);
-    await inherited([
-      "bunx",
-      "wrangler",
-      "d1",
-      "execute",
-      "DB",
-      "--remote",
-      "--yes",
-      "--file",
-      exportPath,
-      "--config",
-      temporaryConfigPath,
-    ]);
-    const deployed = await command([
-      "bunx",
-      "wrangler",
-      "deploy",
-      "--config",
-      temporaryConfigPath,
-      "--message",
-      "Disposable bwf-vault recovery rehearsal",
-    ]);
+    // Import progress streams to the terminal.
+    const imported =
+      await Bun.$`bunx wrangler d1 execute DB --remote --yes --file ${exportPath} --config ${temporaryConfigPath}`.nothrow();
+    if (imported.exitCode !== 0) throw new Error("wrangler failed");
+    const deployed = await captured(
+      Bun.$`bunx wrangler deploy --config ${temporaryConfigPath} --message ${"Disposable bwf-vault recovery rehearsal"}`,
+    );
     workerCreated = true;
     const workerUrl = deployedWorkersDevUrl(deployed);
     await waitForWorker(workerUrl);
@@ -123,31 +91,18 @@ async function main(): Promise<void> {
   } finally {
     if (workerCreated) {
       try {
-        await command([
-          "bunx",
-          "wrangler",
-          "delete",
-          workerName,
-          "--force",
-          "--config",
-          temporaryConfigPath,
-        ]);
+        await captured(
+          Bun.$`bunx wrangler delete ${workerName} --force --config ${temporaryConfigPath}`,
+        );
       } catch {
         cleanupFailures.push(`Worker ${workerName}`);
       }
     }
     if (databaseId !== null) {
       try {
-        await command([
-          "bunx",
-          "wrangler",
-          "d1",
-          "delete",
-          databaseId,
-          "--skip-confirmation",
-          "--config",
-          temporaryConfigPath,
-        ]);
+        await captured(
+          Bun.$`bunx wrangler d1 delete ${databaseId} --skip-confirmation --config ${temporaryConfigPath}`,
+        );
       } catch {
         cleanupFailures.push(`D1 ${databaseId}`);
       }
@@ -205,9 +160,9 @@ function writeTemporaryConfig(
       null,
       2,
     )}\n`,
+    // The path is inside a fresh mkdtemp directory, so the mode applies.
     { mode: 0o600 },
   );
-  chmodSync(path, 0o600);
 }
 
 async function verifyRecoveredVault(origin: URL): Promise<void> {
@@ -241,30 +196,13 @@ async function waitForWorker(origin: URL): Promise<void> {
   throw new Error("disposable recovery Worker did not become reachable");
 }
 
-async function inherited(argv: readonly string[]): Promise<void> {
-  const child = Bun.spawn([...argv], {
-    cwd: packageRoot,
-    env: process.env,
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  if ((await child.exited) !== 0) throw new Error(`${argv[1] ?? argv[0]} failed`);
-}
-
-async function command(argv: readonly string[]): Promise<string> {
-  const child = Bun.spawn([...argv], {
-    cwd: packageRoot,
-    env: process.env,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [code, stdout, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]);
-  if (code !== 0) throw new Error(`${argv[1] ?? argv[0]} failed: ${stderr || stdout}`);
-  return `${stdout}${stderr}`;
+/** Runs a command with output captured and returns stdout and stderr together. */
+async function captured(shell: ReturnType<typeof Bun.$>): Promise<string> {
+  const { exitCode, stdout, stderr } = await shell.quiet().nothrow();
+  if (exitCode !== 0) {
+    throw new Error(`wrangler failed: ${stderr.toString() || stdout.toString()}`);
+  }
+  return stdout.toString() + stderr.toString();
 }
 
 if (import.meta.main) {

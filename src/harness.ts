@@ -3,9 +3,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createApp } from "./app.ts";
-import { generateMasterKey, VaultCrypto } from "./crypto.ts";
+import { generateMasterKey, type VaultCrypto } from "./crypto.ts";
 import { openMemoryD1 } from "./d1-sqlite.ts";
 import { VaultStore } from "./db.ts";
+import { VaultKeyring } from "./keyring.ts";
 
 export const TEST_BOOTSTRAP_TOKEN = "test-bootstrap-token";
 
@@ -29,15 +30,15 @@ export async function createTestVault(
   masterKey: string;
 }> {
   const masterKey = generateMasterKey();
-  const crypto = await VaultCrypto.fromMasterKey(masterKey);
   const env: TestEnv = { DB: openMemoryD1(migrationSql) };
+  const keyring = await VaultKeyring.open(env.DB, masterKey);
   return {
     env,
-    crypto,
-    store: new VaultStore(env.DB, crypto),
-    app: createApp(crypto, {
+    crypto: keyring.crypto,
+    store: new VaultStore(env.DB, keyring.crypto),
+    app: createApp(keyring, {
       bootstrapToken: TEST_BOOTSTRAP_TOKEN,
-      activeMasterKeyFingerprint: "test-master-key",
+      inactiveMasterKey: generateMasterKey(),
       ...options,
     }),
     masterKey,

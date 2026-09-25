@@ -6,92 +6,114 @@
  * and `sealed` is never returned by any route. `policy.ts` is where each of
  * those is enforced.
  *
+ * Each shape is declared once, as a valibot schema, and its TypeScript type is
+ * inferred from it. The server validates requests and the client validates
+ * responses against these same definitions.
+ *
  * `AuditAction` is deliberately a closed union. Adding an audited operation
  * means adding a member, which makes the audit surface reviewable as a list
  * instead of discoverable by grep.
  *
  * @see {@link https://vault.buildwithfriends.dev/concepts/secret-kinds/}
  */
-export type KeyType = "user" | "system";
-export type Permission = "read" | "readwrite" | "full";
-export type KeyMode = "inject" | "broker";
-export type SecretKind = "config" | "secret" | "sealed";
-export type AuditAction =
-  | "audit_list"
-  | "bootstrap"
-  | "broker"
-  | "environment_create"
-  | "environment_delete"
-  | "get"
-  | "inject"
-  | "key_create"
-  | "key_revoke"
-  | "key_rotate"
-  | "list"
-  | "master_key_prepare"
-  | "master_key_retire"
-  | "project_create"
-  | "project_delete"
-  | "route_list"
-  | "route_put"
-  | "secret_delete"
-  | "set";
+import * as v from "valibot";
 
-export type Scope = {
-  project: string;
-  env: string;
-};
+export const keyTypeSchema = v.picklist(["user", "system"]);
+export const permissionSchema = v.picklist(["read", "readwrite", "full"]);
+export const keyModeSchema = v.picklist(["inject", "broker"]);
+export const secretKindSchema = v.picklist(["config", "secret", "sealed"]);
+export const auditActionSchema = v.picklist([
+  "audit_list",
+  "bootstrap",
+  "broker",
+  "environment_create",
+  "environment_delete",
+  "get",
+  "inject",
+  "key_create",
+  "key_revoke",
+  "key_rotate",
+  "list",
+  "master_key_prepare",
+  "master_key_retire",
+  "project_create",
+  "project_delete",
+  "route_list",
+  "route_put",
+  "secret_delete",
+  "set",
+]);
 
-export type ApiKeyRecord = {
-  id: string;
-  keyPrefix: string;
-  type: KeyType;
-  label: string | null;
-  permission: Permission;
-  mode: KeyMode | null;
-  scopes: Scope[] | null;
-  createdAt: string;
-  lastUsedAt: string | null;
-  expiresAt: string;
-  revoked: boolean;
-  revokedAt: string | null;
-};
+export const scopeSchema = v.object({ project: v.string(), env: v.string() });
 
-export type ApiKeyMeta = Omit<ApiKeyRecord, "id">;
+export const apiKeyMetaSchema = v.object({
+  keyPrefix: v.string(),
+  type: keyTypeSchema,
+  label: v.nullable(v.string()),
+  permission: permissionSchema,
+  mode: v.nullable(keyModeSchema),
+  scopes: v.nullable(v.array(scopeSchema)),
+  createdAt: v.string(),
+  lastUsedAt: v.nullable(v.string()),
+  expiresAt: v.string(),
+  revoked: v.boolean(),
+  revokedAt: v.nullable(v.string()),
+});
 
-export type SecretRecord = {
-  name: string;
-  value: string;
-  kind: SecretKind;
-};
+export const secretMetaSchema = v.object({ name: v.string(), kind: secretKindSchema });
 
-export type SecretMeta = {
-  name: string;
-  kind: SecretKind;
-};
+export const secretRecordSchema = v.object({
+  name: v.string(),
+  value: v.string(),
+  kind: secretKindSchema,
+});
 
-export type RouteRecord = {
-  host: string;
-  secretName: string;
-  inject: string;
-  stripHeaders: string[];
-  dummyEnvName: string;
-  dummyValue: string;
-};
+export const routeRecordSchema = v.object({
+  host: v.string(),
+  secretName: v.string(),
+  inject: v.string(),
+  stripHeaders: v.array(v.string()),
+  dummyEnvName: v.string(),
+  dummyValue: v.string(),
+});
 
-export type AuditRecord = {
-  id: string;
-  keyPrefix: string;
-  action: AuditAction;
-  host: string | null;
-  secretName: string | null;
-  status: string;
-  createdAt: string;
-};
+export const auditRecordSchema = v.object({
+  id: v.string(),
+  keyPrefix: v.string(),
+  action: auditActionSchema,
+  host: v.nullable(v.string()),
+  secretName: v.nullable(v.string()),
+  status: v.string(),
+  createdAt: v.string(),
+});
 
-export type MasterKeyWrapMeta = {
-  fingerprint: string;
-  createdAt: string;
-};
+export const masterKeyWrapMetaSchema = v.object({
+  fingerprint: v.string(),
+  createdAt: v.string(),
+});
+
+/** `PUT .../routes` body. The server rejects unknown fields; see `app.ts`. */
+export const routeInputSchema = v.object({
+  host: v.exactOptional(v.pipe(v.string(), v.minLength(1))),
+  secret: v.pipe(v.string(), v.minLength(1)),
+  preset: v.exactOptional(v.string()),
+  header: v.exactOptional(v.string()),
+  dummyEnvName: v.exactOptional(v.string()),
+  dummyValue: v.exactOptional(v.string()),
+});
+
+export type KeyType = v.InferOutput<typeof keyTypeSchema>;
+export type Permission = v.InferOutput<typeof permissionSchema>;
+export type KeyMode = v.InferOutput<typeof keyModeSchema>;
+export type SecretKind = v.InferOutput<typeof secretKindSchema>;
+export type AuditAction = v.InferOutput<typeof auditActionSchema>;
+export type Scope = v.InferOutput<typeof scopeSchema>;
+export type ApiKeyMeta = v.InferOutput<typeof apiKeyMetaSchema>;
+export type ApiKeyRecord = ApiKeyMeta & { id: string };
+export type SecretMeta = v.InferOutput<typeof secretMetaSchema>;
+export type SecretRecord = v.InferOutput<typeof secretRecordSchema>;
+export type RouteRecord = v.InferOutput<typeof routeRecordSchema>;
+export type AuditRecord = v.InferOutput<typeof auditRecordSchema>;
+export type MasterKeyWrapMeta = v.InferOutput<typeof masterKeyWrapMetaSchema>;
 
 export type ProcessEnvironment = Record<string, string | undefined>;

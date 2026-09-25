@@ -1,15 +1,17 @@
-import { FormApi } from "@tanstack/form-core";
 import * as v from "valibot";
 import {
   collectionContextSchema,
   collectionReceiptSchema,
 } from "../collection-contract.ts";
 
+const form = document.querySelector<HTMLFormElement>("#form")!;
 const input = document.querySelector<HTMLInputElement>("#value")!;
 const save = document.querySelector<HTMLButtonElement>("#save")!;
 const cancel = document.querySelector<HTMLButtonElement>("#cancel")!;
 const status = document.querySelector<HTMLElement>("#status")!;
 let terminal = false;
+// Set by any edit, even one that is later erased, so discarding input always asks first.
+let dirty = false;
 const messages = {
   waiting: "Ready. The request expires after ten minutes.",
   saving: "Saving to Vault…",
@@ -20,16 +22,18 @@ const messages = {
   unknown:
     "The save result could not be confirmed. Do not submit again. Ask your agent to inspect Vault before continuing.",
 };
+function clear() {
+  terminal = true;
+  input.value = "";
+  dirty = false;
+}
 function show(receipt: v.InferOutput<typeof collectionReceiptSchema>) {
   status.textContent = messages[receipt.state];
   terminal = receipt.state !== "waiting" && receipt.state !== "saving";
   input.disabled = receipt.state !== "waiting";
   save.disabled = receipt.state !== "waiting";
   cancel.disabled = receipt.state !== "waiting";
-  if (terminal) {
-    input.value = "";
-    form.reset();
-  }
+  if (terminal) clear();
 }
 async function post(action: string, body: { value?: string }) {
   const response = await fetch(`${location.pathname}/${action}`, {
@@ -40,44 +44,33 @@ async function post(action: string, body: { value?: string }) {
   if (!response.ok) throw new Error("Collection failed");
   show(v.parse(collectionReceiptSchema, await response.json()));
 }
-const form = new FormApi({
-  defaultValues: { value: "" },
-  validators: {
-    onSubmit: v.object({ value: v.pipe(v.string(), v.minLength(1), v.maxLength(16384)) }),
-  },
-  onSubmit: async ({ value }) => {
-    input.disabled = true;
-    save.disabled = true;
-    cancel.disabled = true;
-    status.textContent = messages.saving;
-    try {
-      await post("submit", value);
-    } catch {
-      terminal = true;
-      input.value = "";
-      form.reset();
-      status.textContent = messages.unknown;
-    }
-  },
-});
-form.mount();
 input.addEventListener("input", () => {
-  form.setFieldValue("value", input.value);
+  dirty = true;
 });
-document.querySelector<HTMLFormElement>("#form")!.addEventListener("submit", (event) => {
+// The input's `required` and `maxlength` attributes enforce the 1–16384 character
+// rule: the browser fires submit only when they pass.
+form.addEventListener("submit", (event) => {
   event.preventDefault();
-  if (!terminal) void form.handleSubmit();
+  if (terminal) return;
+  const value = input.value;
+  input.disabled = true;
+  save.disabled = true;
+  cancel.disabled = true;
+  status.textContent = messages.saving;
+  void post("submit", { value }).catch(() => {
+    clear();
+    status.textContent = messages.unknown;
+  });
 });
 cancel.addEventListener("click", () => {
-  if (form.state.isDirty && !confirm("Discard the entered value and cancel?")) return;
+  if (dirty && !confirm("Discard the entered value and cancel?")) return;
   void post("cancel", {}).catch(() => {
     status.textContent =
       "Could not confirm cancellation. Close this page; the request will expire.";
   });
 });
 window.addEventListener("beforeunload", (event) => {
-  if (!terminal && (form.state.isDirty || form.state.isSubmitting))
-    event.preventDefault();
+  if (!terminal && dirty) event.preventDefault();
 });
 async function load() {
   const response = await fetch(`${location.pathname}/context`);

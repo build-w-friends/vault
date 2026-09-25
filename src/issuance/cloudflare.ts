@@ -1,40 +1,38 @@
-import * as v from "valibot";
-import type { Plan } from "./contracts.ts";
-import { readProviderResponse } from "./provider-request.ts";
+import { z } from "zod";
+import { cfId, type Plan } from "./contracts.ts";
+import { readProviderResponse, type Send } from "./provider-request.ts";
 
-const cloudflareIdSchema = v.pipe(v.string(), v.regex(/^[a-f0-9]{32}$/u));
-const policySchema = v.looseObject({
-  effect: v.picklist(["allow", "deny"]),
-  permission_groups: v.array(v.looseObject({ id: cloudflareIdSchema })),
-  resources: v.record(
-    v.string(),
-    v.union([v.literal("*"), v.record(v.string(), v.literal("*"))]),
+// Cloudflare echoes policies with extra fields (policy ids, group names), so this
+// reads them loosely; contracts.ts tokenPolicySchema is the strict request shape.
+const policySchema = z.looseObject({
+  effect: z.enum(["allow", "deny"]),
+  permission_groups: z.array(z.looseObject({ id: cfId })),
+  resources: z.record(
+    z.string(),
+    z.union([z.literal("*"), z.record(z.string(), z.literal("*"))]),
   ),
 });
-const tokenSchema = v.looseObject({
-  id: cloudflareIdSchema,
-  name: v.string(),
-  expires_on: v.string(),
-  policies: v.array(policySchema),
-  status: v.literal("active"),
-});
-const createdTokenSchema = v.object({
-  ...tokenSchema.entries,
-  value: v.pipe(v.string(), v.minLength(1)),
+const createdTokenSchema = z.object({
+  id: cfId,
+  name: z.string(),
+  expires_on: z.string(),
+  policies: z.array(policySchema),
+  status: z.literal("active"),
+  value: z.string().min(1),
 });
 
 type TokenPlan = Pick<Plan, "accountId" | "requestId" | "operation" | "expiresAt">;
 type ProviderBody = Awaited<ReturnType<typeof readProviderResponse>>["body"];
 
-const errorsSchema = v.looseObject({
-  errors: v.array(v.looseObject({ code: v.number(), message: v.string() })),
+const errorsSchema = z.looseObject({
+  errors: z.array(z.looseObject({ code: z.number(), message: z.string() })),
 });
 
 function rejectionMessage(status: number, body: ProviderBody | undefined): string {
   const message = `Cloudflare rejected the operation (HTTP ${status})`;
-  const parsed = v.safeParse(errorsSchema, body);
-  if (!parsed.success || parsed.output.errors.length === 0) return message;
-  const details = parsed.output.errors
+  const parsed = errorsSchema.safeParse(body);
+  if (!parsed.success || parsed.data.errors.length === 0) return message;
+  const details = parsed.data.errors
     .slice(0, 5)
     .map((error) => `${error.code}: ${error.message.slice(0, 500)}`)
     .join("; ");
@@ -54,7 +52,7 @@ export class ProviderError extends Error {
 }
 
 export class CloudflareIssuer {
-  constructor(private readonly send: typeof fetch = fetch) {}
+  constructor(private readonly send: Send = fetch) {}
 
   async create(parent: string, plan: TokenPlan): Promise<{ id: string; value: string }> {
     if (plan.operation.kind !== "create-token")
@@ -76,13 +74,7 @@ export class CloudflareIssuer {
     if (
       token.name !== this.tokenName(plan.requestId) ||
       Date.parse(token.expires_on) !== Date.parse(plan.expiresAt) ||
-      canonical(
-        token.policies.map((policy) => ({
-          effect: policy.effect,
-          permission_groups: policy.permission_groups.map(({ id }) => ({ id })),
-          resources: policy.resources,
-        })),
-      ) !== canonical(policies)
+      canonical(token.policies) !== canonical(policies)
     ) {
       try {
         await this.revoke(parent, plan.accountId, token.id);
@@ -102,13 +94,13 @@ export class CloudflareIssuer {
   }
 
   async revoke(parent: string, accountId: string, tokenId: string): Promise<void> {
-    v.parse(cloudflareIdSchema, tokenId);
+    cfId.parse(tokenId);
     await this.call(
       parent,
       accountId,
       `/${tokenId}`,
       "DELETE",
-      v.nullable(v.looseObject({ id: cloudflareIdSchema })),
+      z.looseObject({ id: cfId }).nullable(),
     );
   }
 
@@ -120,7 +112,7 @@ export class CloudflareIssuer {
         plan.accountId,
         `?page=${page}&per_page=50`,
         "GET",
-        v.array(v.looseObject({ id: cloudflareIdSchema, name: v.string() })),
+        z.array(z.looseObject({ id: cfId, name: z.string() })),
       );
       for (const token of rows) {
         if (token.name === this.tokenName(plan.requestId)) ids.push(token.id);
@@ -140,15 +132,15 @@ export class CloudflareIssuer {
     return `vault-issuance-${requestId}`;
   }
 
-  private async call<TSchema extends v.GenericSchema>(
+  private async call<TSchema extends z.ZodType>(
     parent: string,
     accountId: string,
     suffix: string,
     method: "GET" | "POST" | "DELETE",
     resultSchema: TSchema,
     body?: string,
-  ): Promise<v.InferOutput<TSchema>> {
-    v.parse(cloudflareIdSchema, accountId);
+  ): Promise<z.output<TSchema>> {
+    cfId.parse(accountId);
     let response: Response;
     try {
       const send = this.send;
@@ -178,8 +170,7 @@ export class CloudflareIssuer {
         "Cloudflare redirects are not allowed",
       );
     }
-    if (method === "DELETE" && response.status === 404)
-      return v.parse(resultSchema, null);
+    if (method === "DELETE" && response.status === 404) return resultSchema.parse(null);
     if (response.status >= 400 && response.status < 500) {
       // A missing or malformed error body cannot make a definite rejection uncertain.
       const details = await readProviderResponse(response, parent).catch(() => null);
@@ -190,7 +181,7 @@ export class CloudflareIssuer {
         response.status,
       );
     }
-    const schema = v.looseObject({ success: v.boolean(), result: v.unknown() });
+    const schema = z.looseObject({ success: z.boolean(), result: z.unknown() });
     let data: ProviderBody;
     try {
       data = (await readProviderResponse(response, parent)).body;
@@ -200,8 +191,8 @@ export class CloudflareIssuer {
         "Cloudflare returned an invalid response",
       );
     }
-    const parsed = v.safeParse(schema, data);
-    if (!response.ok || !parsed.success || !parsed.output.success) {
+    const parsed = schema.safeParse(data);
+    if (!response.ok || !parsed.success || !parsed.data.success) {
       throw new ProviderError(
         method === "POST" && (response.status >= 500 || response.ok)
           ? "unknown"
@@ -211,23 +202,20 @@ export class CloudflareIssuer {
         response.status,
       );
     }
-    const result = v.safeParse(resultSchema, parsed.output.result);
+    const result = resultSchema.safeParse(parsed.data.result);
     if (!result.success) {
-      const identified = v.safeParse(
-        v.looseObject({ id: cloudflareIdSchema }),
-        parsed.output.result,
-      );
+      const identified = z.looseObject({ id: cfId }).safeParse(parsed.data.result);
       throw new ProviderError(
         method === "POST" ? "unknown" : "rejected",
         "Cloudflare returned an invalid result",
-        method === "POST" && identified.success ? identified.output.id : undefined,
+        method === "POST" && identified.success ? identified.data.id : undefined,
       );
     }
-    return result.output;
+    return result.data;
   }
 }
 
-function canonical(policies: v.InferOutput<typeof policySchema>[]): string {
+function canonical(policies: z.output<typeof policySchema>[]): string {
   return JSON.stringify(
     policies
       .map((policy) =>

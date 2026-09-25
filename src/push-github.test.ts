@@ -4,7 +4,7 @@ import sodium from "libsodium-wrappers";
 
 import {
   encryptGithubSecret,
-  namesFromGithubListing,
+  githubSecretListing,
   pushGithubSecrets,
 } from "./push-github.ts";
 
@@ -24,7 +24,7 @@ describe("github push", () => {
 
   test("reads names from the actions secrets listing", () => {
     expect(
-      namesFromGithubListing({
+      githubSecretListing.parse({
         total_count: 1,
         secrets: [{ name: "CI_TOKEN", created_at: "x", updated_at: "y" }],
       }),

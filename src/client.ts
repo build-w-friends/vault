@@ -16,12 +16,18 @@ import {
   apiKeyMetaSchema,
   auditRecordSchema,
   masterKeyWrapMetaSchema,
-  routeInputSchema,
   routeRecordSchema,
   secretMetaSchema,
   secretRecordSchema,
 } from "./client-schemas.ts";
-import type { Scope, SecretKind } from "./types.ts";
+import type {
+  KeyMode,
+  KeyType,
+  Permission,
+  routeInputSchema,
+  Scope,
+  SecretKind,
+} from "./types.ts";
 import { collectedSecretSchema, type CollectionTarget } from "./collection-contract.ts";
 
 const keyResponseSchema = v.looseObject({ key: v.string(), prefix: v.string() });
@@ -67,18 +73,22 @@ export class VaultClient {
     method: string,
     path: string,
     schema: TSchema,
-    body?: string,
-    auth = true,
-    extraHeaders?: Record<string, string>,
+    options: {
+      body?: unknown;
+      auth?: boolean;
+      headers?: Record<string, string>;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<v.InferOutput<TSchema>> {
     const headers: Record<string, string> = {};
-    if (auth) headers.Authorization = `Bearer ${this.apiKey}`;
-    if (body != null) headers["content-type"] = "application/json";
+    if (options.auth !== false) headers.Authorization = `Bearer ${this.apiKey}`;
+    if (options.body !== undefined) headers["content-type"] = "application/json";
     const response = await fetch(new URL(path, this.origin), {
       method,
-      headers: { ...headers, ...extraHeaders },
-      body,
+      headers: { ...headers, ...options.headers },
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
       redirect: "error",
+      signal: options.signal,
     });
     const text = await response.text();
     const parsed: unknown = text.length > 0 ? JSON.parse(text) : {};
@@ -99,35 +109,33 @@ export class VaultClient {
     return result.output;
   }
 
-  async createCollectedSecret(target: CollectionTarget, value: string) {
-    const body = v.parse(collectedSecretSchema, { kind: target.kind, value });
-    const path = `/v1/projects/${encodeURIComponent(target.project)}/environments/${encodeURIComponent(target.env)}/secrets/${encodeURIComponent(target.name)}`;
-    // A timeout or malformed reply leaves an unknown outcome; callers must not retry.
-    const response = await fetch(new URL(path, this.origin), {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        "Content-Type": "application/json",
+  private envPath(project: string, env: string): string {
+    return `/v1/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(env)}`;
+  }
+
+  /**
+   * Create-only write behind `vault secrets collect`. A 409 means the name is
+   * taken; any other failure, including a timeout or a malformed reply, leaves
+   * an unknown outcome that callers must not retry.
+   */
+  async createCollectedSecret(target: CollectionTarget, value: string): Promise<void> {
+    await this.request(
+      "POST",
+      `${this.envPath(target.project, target.env)}/secrets/${encodeURIComponent(target.name)}`,
+      okResponseSchema,
+      {
+        body: v.parse(collectedSecretSchema, { kind: target.kind, value }),
+        signal: AbortSignal.timeout(30000),
       },
-      body: JSON.stringify(body),
-      redirect: "error",
-      signal: AbortSignal.timeout(30000),
-    });
-    if (response.status === 409) throw new VaultClientError(409, "secret already exists");
-    if (!response.ok)
-      throw new Error("secret collection did not return a successful receipt");
-    v.parse(okResponseSchema, await response.json());
+    );
   }
 
   bootstrap(bootstrapToken: string, label?: string) {
-    return this.request(
-      "POST",
-      "/v1/bootstrap",
-      keyResponseSchema,
-      JSON.stringify({ label }),
-      false,
-      { "X-Vault-Bootstrap-Token": bootstrapToken },
-    );
+    return this.request("POST", "/v1/bootstrap", keyResponseSchema, {
+      body: { label },
+      auth: false,
+      headers: { "X-Vault-Bootstrap-Token": bootstrapToken },
+    });
   }
 
   listProjects() {
@@ -143,7 +151,7 @@ export class VaultClient {
       "POST",
       "/v1/projects",
       v.looseObject({ id: v.string(), name: v.string() }),
-      JSON.stringify({ name }),
+      { body: { name } },
     );
   }
 
@@ -168,22 +176,18 @@ export class VaultClient {
       "POST",
       `/v1/projects/${encodeURIComponent(project)}/environments`,
       v.looseObject({ name: v.string() }),
-      JSON.stringify({ name }),
+      { body: { name } },
     );
   }
 
   deleteEnvironment(project: string, env: string) {
-    return this.request(
-      "DELETE",
-      `/v1/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(env)}`,
-      okResponseSchema,
-    );
+    return this.request("DELETE", this.envPath(project, env), okResponseSchema);
   }
 
   listSecretMeta(project: string, env: string) {
     return this.request(
       "GET",
-      `/v1/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(env)}/secrets`,
+      `${this.envPath(project, env)}/secrets`,
       v.looseObject({ secrets: v.array(secretMetaSchema) }),
     );
   }
@@ -191,7 +195,7 @@ export class VaultClient {
   listSecrets(project: string, env: string) {
     return this.request(
       "GET",
-      `/v1/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(env)}/secrets?show=1`,
+      `${this.envPath(project, env)}/secrets?show=1`,
       v.looseObject({
         secrets: v.array(
           v.looseObject({
@@ -206,7 +210,7 @@ export class VaultClient {
   exportSecrets(project: string, env: string) {
     return this.request(
       "GET",
-      `/v1/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(env)}/secrets?export=1`,
+      `${this.envPath(project, env)}/secrets?export=1`,
       v.looseObject({ secrets: v.array(secretRecordSchema) }),
     );
   }
@@ -214,7 +218,7 @@ export class VaultClient {
   getSecret(project: string, env: string, name: string) {
     return this.request(
       "GET",
-      `/v1/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(env)}/secrets/${encodeURIComponent(name)}`,
+      `${this.envPath(project, env)}/secrets/${encodeURIComponent(name)}`,
       secretRecordSchema,
     );
   }
@@ -229,16 +233,16 @@ export class VaultClient {
   ) {
     return this.request(
       "PATCH",
-      `/v1/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(env)}/secrets`,
+      `${this.envPath(project, env)}/secrets`,
       okResponseSchema,
-      JSON.stringify(body),
+      { body },
     );
   }
 
   listRoutes(project: string, env: string) {
     return this.request(
       "GET",
-      `/v1/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(env)}/routes`,
+      `${this.envPath(project, env)}/routes`,
       v.looseObject({ routes: v.array(routeRecordSchema) }),
     );
   }
@@ -246,21 +250,21 @@ export class VaultClient {
   putRoute(project: string, env: string, body: v.InferInput<typeof routeInputSchema>) {
     return this.request(
       "PUT",
-      `/v1/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(env)}/routes`,
+      `${this.envPath(project, env)}/routes`,
       v.looseObject({ ok: v.literal(true), host: v.string() }),
-      JSON.stringify(body),
+      { body },
     );
   }
 
   createKey(body: {
-    type: "user" | "system";
+    type: KeyType;
     label?: string;
-    permission?: "read" | "readwrite" | "full";
-    mode?: "inject" | "broker";
+    permission?: Permission;
+    mode?: KeyMode;
     scopes?: Scope[];
     expiresInDays?: number;
   }) {
-    return this.request("POST", "/v1/keys", keyResponseSchema, JSON.stringify(body));
+    return this.request("POST", "/v1/keys", keyResponseSchema, { body });
   }
 
   listKeys(includeRevoked = false) {
@@ -276,7 +280,7 @@ export class VaultClient {
       "POST",
       `/v1/keys/${encodeURIComponent(prefix)}/rotate`,
       keyResponseSchema,
-      JSON.stringify(expiresInDays == null ? {} : { expiresInDays }),
+      { body: expiresInDays == null ? {} : { expiresInDays } },
     );
   }
 
@@ -317,7 +321,7 @@ export class VaultClient {
       "POST",
       "/v1/master-keys/prepare",
       v.looseObject({ fingerprint: v.string() }),
-      JSON.stringify({}),
+      { body: {} },
     );
   }
 

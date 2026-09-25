@@ -24,9 +24,9 @@
  *
  * @see {@link https://vault.buildwithfriends.dev/reference/cli/}
  */
-import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parseArgs } from "node:util";
 
 import { serveAgentMcp } from "./agent/cli.ts";
 import { runIssuanceCli } from "./issuance/cli.ts";
@@ -41,11 +41,7 @@ import { startSecretCollection, openCollectionBrowser } from "./collection.ts";
 import { proxyChildEnv, startProxy } from "./proxy.ts";
 import { loadRequiredSecretValues } from "./inject.ts";
 import { loadVaultValues, pushDestinations } from "./push.ts";
-import {
-  loadRepoContext,
-  resolveWranglerEnvironment,
-  type WranglerEnvironmentConfig,
-} from "./repo-config.ts";
+import { loadRepoContext, resolveWranglerEnvironment } from "./repo-config.ts";
 import { collectStatus, formatStatus, statusFails } from "./status.ts";
 import type {
   KeyMode,
@@ -56,138 +52,129 @@ import type {
   SecretKind,
 } from "./types.ts";
 
-type Flags = {
-  apiUrl?: string;
-  apiKey?: string;
-  project?: string;
-  env?: string;
-  githubRepo?: string;
-  wranglerEnv?: string;
-  label?: string;
-  type?: string;
-  permission?: string;
-  mode?: string;
-  scopes: string[];
-  expiresInDays?: number;
-  kind?: string;
-  preset?: string;
-  host?: string;
-  header?: string;
-  dummyEnvName?: string;
-  dummyValue?: string;
-  cursor?: string;
-  limit?: number;
-  yes: boolean;
-  random: boolean;
-  includeRevoked: boolean;
-  rest: string[];
-};
+const options = {
+  "api-url": { type: "string" },
+  project: { type: "string" },
+  env: { type: "string" },
+  "github-repo": { type: "string" },
+  "wrangler-env": { type: "string" },
+  label: { type: "string" },
+  type: { type: "string" },
+  permission: { type: "string" },
+  mode: { type: "string" },
+  kind: { type: "string" },
+  preset: { type: "string" },
+  host: { type: "string" },
+  header: { type: "string" },
+  "dummy-env": { type: "string" },
+  "dummy-value": { type: "string" },
+  cursor: { type: "string" },
+  scope: { type: "string", multiple: true },
+  "expires-in-days": { type: "string" },
+  limit: { type: "string" },
+  yes: { type: "boolean" },
+  random: { type: "boolean" },
+  "include-revoked": { type: "boolean" },
+} as const;
+const optionTypes = new Map<string, string>(
+  Object.entries(options).map(([name, option]) => [name, option.type]),
+);
 
-type TextFlag = {
-  [Key in keyof Flags]-?: Flags[Key] extends string | undefined ? Key : never;
-}[keyof Flags];
+type Flags = ReturnType<typeof parseArgv>["flags"];
 
-const stringFlags = new Map<string, TextFlag>([
-  ["--api-url", "apiUrl"],
-  ["--project", "project"],
-  ["--env", "env"],
-  ["--github-repo", "githubRepo"],
-  ["--wrangler-env", "wranglerEnv"],
-  ["--label", "label"],
-  ["--type", "type"],
-  ["--permission", "permission"],
-  ["--mode", "mode"],
-  ["--kind", "kind"],
-  ["--preset", "preset"],
-  ["--host", "host"],
-  ["--header", "header"],
-  ["--dummy-env", "dummyEnvName"],
-  ["--dummy-value", "dummyValue"],
-  ["--cursor", "cursor"],
-]);
-
-type ParseArgvResult = { command: string; flags: Flags };
-
-export function parseArgv(argv: string[]): ParseArgvResult {
-  const flags: Flags = {
-    scopes: [],
-    yes: false,
-    random: false,
-    includeRevoked: false,
-    rest: [],
-  };
-  let command = "help";
-  let i = 0;
-  if (argv[0] != null && !argv[0].startsWith("-")) {
-    command = argv[0];
-    i = 1;
-  }
-  while (i < argv.length) {
-    const token = argv[i] ?? "";
-    if (token === "--") {
-      flags.rest = argv.slice(i + 1);
+/**
+ * The first argument is the command unless it starts with `-`. Known options
+ * may appear anywhere before `--`; everything else (positionals and unknown
+ * options, verbatim) lands in `rest` for the subcommand, and `--` replaces
+ * `rest` with the arguments after it.
+ */
+export function parseArgv(argv: string[]) {
+  const first = argv[0];
+  const command = first != null && !first.startsWith("-") ? first : null;
+  const args = command == null ? argv : argv.slice(1);
+  const { tokens } = parseArgs({
+    args,
+    options,
+    strict: false,
+    allowPositionals: true,
+    tokens: true,
+  });
+  let rest: string[] = [];
+  let lastIndex = -1;
+  const seen = new Map<string, string[]>();
+  for (const token of tokens) {
+    if (token.kind === "option-terminator") {
+      rest = args.slice(token.index + 1);
       break;
     }
-    if (token === "--yes") {
-      flags.yes = true;
-      i += 1;
-      continue;
-    }
-    if (token === "--random") {
-      flags.random = true;
-      i += 1;
-      continue;
-    }
-    if (token === "--include-revoked") {
-      flags.includeRevoked = true;
-      i += 1;
-      continue;
-    }
-    if (token === "--scope") {
-      const value = argv[i + 1];
-      if (value == null) throw new Error("--scope requires PROJECT/ENV");
-      flags.scopes.push(value);
-      i += 2;
-      continue;
-    }
-    if (token === "--expires-in-days" || token === "--limit") {
-      const value = argv[i + 1];
-      if (value == null || !/^\d+$/u.test(value)) {
-        throw new Error(`${token} requires a positive integer`);
-      }
-      if (token === "--expires-in-days") flags.expiresInDays = Number(value);
-      else flags.limit = Number(value);
-      i += 2;
-      continue;
-    }
-    const field = stringFlags.get(token);
-    if (field != null) {
-      const value = argv[i + 1];
-      if (value == null) throw new Error(`${token} requires a value`);
-      flags[field] = value;
-      i += 2;
-      continue;
-    }
-    if (token === "--api-key") {
+    if (token.kind === "option" && token.name === "api-key") {
       throw new Error("--api-key is not accepted; use VAULT_API_KEY or hidden input");
     }
-    flags.rest.push(token);
-    i += 1;
+    const type = token.kind === "option" ? optionTypes.get(token.name) : undefined;
+    if (token.kind === "option" && type != null) {
+      const value = token.value;
+      if (token.name === "expires-in-days" || token.name === "limit") {
+        if (value == null || !/^\d+$/u.test(value)) {
+          throw new Error(`${token.rawName} requires a positive integer`);
+        }
+      } else if (token.name === "scope" && value == null) {
+        throw new Error("--scope requires PROJECT/ENV");
+      } else if (type === "string" && value == null) {
+        throw new Error(`${token.rawName} requires a value`);
+      }
+      if (type === "boolean" && value != null) continue;
+      seen.set(token.name, [...(seen.get(token.name) ?? []), value ?? ""]);
+      continue;
+    }
+    // A short-option group such as `-abc` yields one token per letter.
+    if (token.index !== lastIndex) rest.push(args[token.index]!);
+    lastIndex = token.index;
   }
-  return { command, flags };
+  const text = (name: keyof typeof options) => seen.get(name)?.at(-1);
+  const integer = (name: "expires-in-days" | "limit") => {
+    const value = text(name);
+    return value == null ? undefined : Number(value);
+  };
+  return {
+    command: command ?? "help",
+    flags: {
+      apiUrl: text("api-url"),
+      project: text("project"),
+      env: text("env"),
+      githubRepo: text("github-repo"),
+      wranglerEnv: text("wrangler-env"),
+      label: text("label"),
+      type: text("type"),
+      permission: text("permission"),
+      mode: text("mode"),
+      kind: text("kind"),
+      preset: text("preset"),
+      host: text("host"),
+      header: text("header"),
+      dummyEnvName: text("dummy-env"),
+      dummyValue: text("dummy-value"),
+      cursor: text("cursor"),
+      scopes: seen.get("scope") ?? [],
+      expiresInDays: integer("expires-in-days"),
+      limit: integer("limit"),
+      yes: seen.has("yes"),
+      random: seen.has("random"),
+      includeRevoked: seen.has("include-revoked"),
+      rest,
+    },
+  };
 }
 
 function session(flags: Flags, cwd = process.cwd()) {
   const repo = loadRepoContext(cwd);
+  // Precedence: flag, vault.json, VAULT_PROJECT/VAULT_ENV, stored config, default.
   const resolved = resolveClientOptions({
     apiUrl: flags.apiUrl,
-    apiKey: flags.apiKey,
     project: flags.project ?? repo.vault.project,
     env: flags.env ?? repo.vault.env,
-    githubRepo: flags.githubRepo,
   });
-  const project = resolved.project ?? repo.vault.project ?? "bwf";
-  const env = resolved.env ?? repo.vault.env ?? "dev";
+  const project = resolved.project ?? "bwf";
+  const env = resolved.env ?? "dev";
   return {
     repo,
     cwd,
@@ -199,11 +186,8 @@ function session(flags: Flags, cwd = process.cwd()) {
     // Deliberately lazy. Only the three commands that read the Wrangler
     // contract may fail on an unselected environment; `vault secrets list`
     // has no business caring which Worker environment exists.
-    wranglerEnvironment: (): WranglerEnvironmentConfig | null => {
-      const options: Parameters<typeof resolveWranglerEnvironment>[1] = { vaultEnv: env };
-      if (flags.wranglerEnv != null) options.wranglerEnv = flags.wranglerEnv;
-      return resolveWranglerEnvironment(repo, options);
-    },
+    wranglerEnvironment: () =>
+      resolveWranglerEnvironment(repo, { vaultEnv: env, wranglerEnv: flags.wranglerEnv }),
   };
 }
 
@@ -635,7 +619,7 @@ async function runKeys(flags: Flags, io: { log: (value: string) => void }) {
       "--permission",
     );
     const mode = enumValue<KeyMode>(flags.mode, ["inject", "broker"], "inject", "--mode");
-    const keyOptions: Parameters<VaultClient["createKey"]>[0] = {
+    const keyOptions: Parameters<typeof client.createKey>[0] = {
       type,
       label: flags.label,
       permission,
@@ -676,13 +660,14 @@ async function runRoutes(flags: Flags, io: { log: (value: string) => void }) {
   if (sub === "put") {
     const secret = flags.rest[1];
     if (secret == null) throw new Error("usage: vault routes put SECRET [options]");
-    const routeOptions: Parameters<VaultClient["putRoute"]>[2] = { secret };
-    if (flags.preset != null) routeOptions.preset = flags.preset;
-    if (flags.host != null) routeOptions.host = flags.host;
-    if (flags.header != null) routeOptions.header = flags.header;
-    if (flags.dummyEnvName != null) routeOptions.dummyEnvName = flags.dummyEnvName;
-    if (flags.dummyValue != null) routeOptions.dummyValue = flags.dummyValue;
-    const route = await client.putRoute(project, env, routeOptions);
+    const route = await client.putRoute(project, env, {
+      secret,
+      preset: flags.preset,
+      host: flags.host,
+      header: flags.header,
+      dummyEnvName: flags.dummyEnvName,
+      dummyValue: flags.dummyValue,
+    });
     io.log(route.host);
     return 0;
   }
@@ -720,14 +705,13 @@ async function runInjected(flags: Flags): Promise<number> {
   if (flags.rest.length === 0) throw new Error("usage: vault run -- CMD");
   // One resolver for `vault run` and the Vite plugin. Two of them drifted once
   // already: only this one rejected an empty value.
-  const injectOptions: Parameters<typeof loadRequiredSecretValues>[0] = {
+  const injected = await loadRequiredSecretValues({
     cwd,
     client,
     project,
     env,
-  };
-  if (flags.wranglerEnv != null) injectOptions.wranglerEnv = flags.wranglerEnv;
-  const injected = await loadRequiredSecretValues(injectOptions);
+    wranglerEnv: flags.wranglerEnv,
+  });
   return spawnCommand(flags.rest, {
     ...process.env,
     ...injected,
@@ -754,23 +738,15 @@ async function runProxied(flags: Flags): Promise<number> {
   }
 }
 
-function spawnCommand(argv: string[], env: ProcessEnvironment): Promise<number> {
-  const [command, ...args] = argv;
-  if (command == null) return Promise.resolve(1);
-  return new Promise((finish) => {
-    const child = spawn(command, args, {
-      // SAFETY: spawn accepts string environment entries; generated Worker declarations
-      // add required vault bindings to ProcessEnv that a child process does not need.
-      env: env as NodeJS.ProcessEnv,
-      stdio: "inherit",
-    });
-    child.on("exit", (code) => {
-      finish(code ?? 1);
-    });
-    child.on("error", () => {
-      finish(1);
-    });
-  });
+/** The child's exit code; 1 when it cannot start or is killed by a signal. */
+async function spawnCommand(argv: string[], env: ProcessEnvironment): Promise<number> {
+  try {
+    const child = Bun.spawn(argv, { env, stdio: ["inherit", "inherit", "inherit"] });
+    await child.exited;
+    return child.exitCode ?? 1;
+  } catch {
+    return 1;
+  }
 }
 
 function helpText(): string {
@@ -818,8 +794,4 @@ commands use operator/system keys; issuance uses a separate tenant member sessio
 Documentation: https://vault.buildwithfriends.dev/reference/cli/`;
 }
 
-if (import.meta.main) {
-  void (async () => {
-    process.exit(await runCli(process.argv.slice(2)));
-  })();
-}
+if (import.meta.main) process.exit(await runCli(process.argv.slice(2)));

@@ -1,6 +1,5 @@
 import { createSign } from "node:crypto";
 import * as v from "valibot";
-import { z } from "zod";
 
 const githubAppSchema = v.strictObject({
   appId: v.pipe(v.string(), v.regex(/^[0-9]+$/u)),
@@ -51,13 +50,7 @@ export async function providerJson(response: Response) {
   } finally {
     await reader.cancel();
   }
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return z.json().parse(JSON.parse(new TextDecoder().decode(bytes)));
+  return JSON.parse(await new Blob(chunks).text());
 }
 export async function githubAccess(
   config: string,

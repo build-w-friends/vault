@@ -1,3 +1,4 @@
+import * as v from "valibot";
 /**
  * The brokering proxy behind `vault proxy`.
  *
@@ -24,6 +25,7 @@
  * @see {@link https://vault.buildwithfriends.dev/concepts/brokering/}
  */
 import { generateKeyPairSync } from "node:crypto";
+import { once } from "node:events";
 import {
   createServer as createHttpServer,
   type IncomingMessage,
@@ -40,7 +42,6 @@ import forge from "node-forge";
 import { applyInject } from "./presets.ts";
 import type { ProcessEnvironment, RouteRecord, SecretRecord } from "./types.ts";
 import { dummyForProxy } from "./policy.ts";
-import * as v from "valibot";
 
 type ProxyCa = {
   certPem: string;
@@ -51,7 +52,6 @@ type ProxyCa = {
 
 export type ProxyHandle = {
   port: number;
-  caPem: string;
   caPath: string;
   dummyEnv: Record<string, string>;
   stop: () => Promise<void>;
@@ -148,25 +148,12 @@ export async function startProxy(input: {
     routesByHost.set(host, route);
   }
 
-  const decryptedHttp = createHttpServer();
-  decryptedHttp.on("request", (req, res) => {
-    void handleMitmRequest(req, res, {
-      routes: input.routes,
-      routesByHost,
-      secretByName,
-      forward: input.forward ?? {},
-    });
-  });
-
-  const proxy = createHttpServer();
-  proxy.on("request", (req, res) => {
-    void handleMitmRequest(req, res, {
-      routes: input.routes,
-      routesByHost,
-      secretByName,
-      forward: input.forward ?? {},
-    });
-  });
+  const context = { routesByHost, secretByName, forward: input.forward ?? {} };
+  const onRequest = (req: IncomingMessage, res: ServerResponse) => {
+    void handleMitmRequest(req, res, context);
+  };
+  const decryptedHttp = createHttpServer(onRequest);
+  const proxy = createHttpServer(onRequest);
   proxy.on("connect", (req, socket, head) => {
     const host = hostFromAuthority(req.url ?? "");
     if (host == null || !routesByHost.has(host)) {
@@ -188,16 +175,13 @@ export async function startProxy(input: {
     decryptedHttp.emit("connection", tlsSocket);
   });
 
-  const port = await new Promise<number>((resolve, reject) => {
-    proxy.listen(input.port ?? 0, "127.0.0.1", () => {
-      const address = proxy.address();
-      if (address == null || v.is(v.string(), address)) {
-        reject(new Error("proxy failed to bind"));
-        return;
-      }
-      resolve(address.port);
-    });
-  });
+  proxy.listen(input.port ?? 0, "127.0.0.1");
+  await once(proxy, "listening");
+  const address = proxy.address();
+  if (address == null || v.is(v.string(), address)) {
+    throw new Error("proxy failed to bind");
+  }
+  const port = address.port;
 
   const caDirectory = mkdtempSync(join(tmpdir(), "poc-vault-ca-"));
   chmodSync(caDirectory, 0o700);
@@ -207,7 +191,6 @@ export async function startProxy(input: {
 
   return {
     port,
-    caPem: ca.certPem,
     caPath,
     dummyEnv: dummyEnvFor(input.secrets, input.routes),
     stop: async () => {
@@ -227,7 +210,6 @@ async function handleMitmRequest(
   req: IncomingMessage,
   res: ServerResponse,
   input: {
-    routes: RouteRecord[];
     routesByHost: Map<string, RouteRecord>;
     secretByName: Map<string, SecretRecord>;
     forward: Record<string, string>;
@@ -247,9 +229,7 @@ async function handleMitmRequest(
     if (incomingUrl != null && hostFromAuthority(req.headers.host ?? "") !== host) {
       throw new Error("proxy host header does not match request URL");
     }
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) chunks.push(Buffer.from(chunk));
-    const body = Buffer.concat(chunks);
+    const body = Buffer.concat(await Array.fromAsync(req));
     const headers = new Headers();
     for (const [name, value] of Object.entries(req.headers)) {
       if (value == null || name === "host") continue;

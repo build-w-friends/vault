@@ -23,24 +23,14 @@ import {
   masterKeyFingerprint,
   parseMasterKey,
 } from "./crypto.ts";
+import { PolicyError } from "./policy.ts";
 import type { MasterKeyWrapMeta } from "./types.ts";
-import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 type WrapRow = {
   fingerprint: string;
   wrapped_data_key: string;
   created_at: string;
 };
-
-export class KeyringError extends Error {
-  constructor(
-    readonly status: ContentfulStatusCode,
-    message: string,
-  ) {
-    super(message);
-    this.name = "KeyringError";
-  }
-}
 
 export class VaultKeyring {
   private constructor(
@@ -63,15 +53,7 @@ export class VaultKeyring {
         );
       }
       const crypto = await VaultCrypto.generate();
-      const prepared = await crypto.wrapForMasterKey(masterKey);
-      await db
-        .prepare(
-          `INSERT OR IGNORE INTO master_key_wraps (
-            fingerprint, wrapped_data_key, created_at
-          ) VALUES (?, ?, ?)`,
-        )
-        .bind(prepared.fingerprint, prepared.wrappedDataKey, new Date().toISOString())
-        .run();
+      await insertWrap(db, await crypto.wrapForMasterKey(masterKey));
       row = await findWrap(db, fingerprint);
       if (row == null) throw new MasterKeyError("vault key material was not initialized");
     }
@@ -84,16 +66,9 @@ export class VaultKeyring {
   async prepare(db: D1Database, masterKey: string | undefined): Promise<string> {
     const prepared = await this.crypto.wrapForMasterKey(masterKey);
     if (prepared.fingerprint === this.activeFingerprint) {
-      throw new KeyringError(409, "inactive master-key slot matches the active slot");
+      throw new PolicyError(409, "inactive master-key slot matches the active slot");
     }
-    await db
-      .prepare(
-        `INSERT OR IGNORE INTO master_key_wraps (
-          fingerprint, wrapped_data_key, created_at
-        ) VALUES (?, ?, ?)`,
-      )
-      .bind(prepared.fingerprint, prepared.wrappedDataKey, new Date().toISOString())
-      .run();
+    await insertWrap(db, prepared);
     return prepared.fingerprint;
   }
 
@@ -109,14 +84,14 @@ export class VaultKeyring {
 
   async retire(db: D1Database, fingerprint: string): Promise<void> {
     if (fingerprint === this.activeFingerprint) {
-      throw new KeyringError(409, "cannot retire the active master-key wrap");
+      throw new PolicyError(409, "cannot retire the active master-key wrap");
     }
     const result = await db
       .prepare("DELETE FROM master_key_wraps WHERE fingerprint = ?")
       .bind(fingerprint)
       .run();
     if ((result.meta.changes ?? 0) === 0) {
-      throw new KeyringError(404, "master-key wrap not found");
+      throw new PolicyError(404, "master-key wrap not found");
     }
   }
 }
@@ -133,4 +108,18 @@ async function countWraps(db: D1Database): Promise<number> {
     .prepare("SELECT COUNT(*) AS n FROM master_key_wraps")
     .first<{ n: number }>();
   return row?.n ?? 0;
+}
+
+async function insertWrap(
+  db: D1Database,
+  wrap: { fingerprint: string; wrappedDataKey: string },
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO master_key_wraps (
+        fingerprint, wrapped_data_key, created_at
+      ) VALUES (?, ?, ?)`,
+    )
+    .bind(wrap.fingerprint, wrap.wrappedDataKey, new Date().toISOString())
+    .run();
 }

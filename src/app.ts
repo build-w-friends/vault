@@ -6,12 +6,12 @@
  * exception, authenticated instead by a constant-time comparison against the
  * Secrets Store bootstrap token.
  *
- * Every request schema is `.strict()`. An unknown field is a 400 rather than a
+ * Every request schema is a strict object. An unknown field is a 400 rather than a
  * silently ignored key, so a caller sending a field this Worker does not
  * implement finds out immediately instead of believing it took effect.
  *
- * Authority is never decided here — routes call into `policy.ts` and let its
- * `PolicyError` / `StoreError` / `KeyringError` carry the status out through
+ * Authority is never decided here — routes call into `policy.ts` and let the
+ * `PolicyError` it, the store, and the keyring throw carry the status out through
  * `onError`. An unrecognized error logs structurally and answers a generic 500,
  * because an internal message is a description of the vault's internals.
  *
@@ -20,12 +20,15 @@
  *
  * @see {@link https://vault.buildwithfriends.dev/reference/http-api/}
  */
-import { Hono } from "hono";
+import { Hono, type HonoRequest } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import { createMiddleware } from "hono/factory";
+import * as v from "valibot";
 import { z } from "zod";
 
-import { VaultCrypto, timingSafeStringEqual } from "./crypto.ts";
-import { StoreError, VaultStore } from "./db.ts";
-import { KeyringError, VaultKeyring } from "./keyring.ts";
+import { timingSafeStringEqual } from "./crypto.ts";
+import { VaultStore } from "./db.ts";
+import type { VaultKeyring } from "./keyring.ts";
 import { bearerFrom, randomApiKey, randomSecretValue } from "./keys.ts";
 import {
   PolicyError,
@@ -33,8 +36,7 @@ import {
   assertCanWrite,
   assertActiveKey,
   assertScope,
-  canManageKeys,
-  canManageProjects,
+  isOperator,
   valueVisibleOnGet,
 } from "./policy.ts";
 import { issuanceRoutes } from "./issuance/routes.ts";
@@ -43,101 +45,112 @@ import { IssuanceService } from "./issuance/service.ts";
 import { adminSchema, id as issuanceId } from "./issuance/contracts.ts";
 import { handleMcp } from "./mcp.ts";
 import { collectedSecretSchema, collectionTargetSchema } from "./collection-contract.ts";
-import { bodyLimit } from "hono/body-limit";
 import { genericRoute, routePreset } from "./presets.ts";
-import type {
-  ApiKeyMeta,
-  ApiKeyRecord,
-  AuditAction,
-  KeyMode,
-  Permission,
-  SecretKind,
+import {
+  keyModeSchema,
+  keyTypeSchema,
+  permissionSchema,
+  routeInputSchema,
+  scopeSchema,
+  secretKindSchema,
+  type ApiKeyMeta,
+  type ApiKeyRecord,
+  type AuditAction,
+  type KeyMode,
+  type Permission,
+  type SecretKind,
 } from "./types.ts";
-import * as v from "valibot";
 
 type Variables = {
   store: VaultStore;
   key: ApiKeyRecord;
 };
 
-const secretKindSchema = z.enum(["config", "secret", "sealed"]);
-const bootstrapSchema = z
-  .object({
-    label: z.string().min(1).max(120).optional(),
-  })
-  .strict();
-const createProjectSchema = z.object({ name: z.string().min(1).max(120) }).strict();
-const createEnvSchema = z.object({ name: z.string().min(1).max(120) }).strict();
-const createKeySchema = z
-  .object({
-    type: z.enum(["user", "system"]),
-    label: z.string().optional(),
-    permission: z.enum(["read", "readwrite", "full"]).optional(),
-    mode: z.enum(["inject", "broker"]).optional(),
-    scopes: z.array(z.object({ project: z.string(), env: z.string() })).optional(),
-    expiresInDays: z.number().int().min(1).max(365).optional(),
-  })
-  .strict();
-const rotateKeySchema = z
-  .object({
-    expiresInDays: z.number().int().min(1).max(365).optional(),
-  })
-  .strict();
-const patchSecretsSchema = z
-  .object({
-    set: z
-      .array(
-        z.object({
-          name: z.string().min(1),
-          value: z.string().optional(),
-          kind: secretKindSchema.optional(),
-          random: z.boolean().optional(),
-        }),
-      )
-      .optional(),
-    delete: z.array(z.string()).optional(),
-  })
-  .strict();
-const putRouteSchema = z
-  .object({
-    host: z.string().min(1).optional(),
-    secret: z.string().min(1),
-    preset: z.string().optional(),
-    header: z.string().optional(),
-    dummyEnvName: z.string().optional(),
-    dummyValue: z.string().optional(),
-  })
-  .strict();
+const nameSchema = v.strictObject({
+  name: v.pipe(v.string(), v.minLength(1), v.maxLength(120)),
+});
+const bootstrapSchema = v.strictObject({
+  label: v.optional(nameSchema.entries.name),
+});
+const expiresInDaysSchema = v.optional(
+  v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(365)),
+);
+const createKeySchema = v.strictObject({
+  type: keyTypeSchema,
+  label: v.optional(v.string()),
+  permission: v.optional(permissionSchema),
+  mode: v.optional(keyModeSchema),
+  scopes: v.optional(v.array(scopeSchema)),
+  expiresInDays: expiresInDaysSchema,
+});
+const rotateKeySchema = v.strictObject({ expiresInDays: expiresInDaysSchema });
+const patchSecretsSchema = v.strictObject({
+  set: v.optional(
+    v.array(
+      v.object({
+        name: v.pipe(v.string(), v.minLength(1)),
+        value: v.optional(v.string()),
+        kind: v.optional(secretKindSchema),
+        random: v.optional(v.boolean()),
+      }),
+    ),
+  ),
+  delete: v.optional(v.array(v.string())),
+});
+const putRouteSchema = v.strictObject(routeInputSchema.entries);
 const auditCursorSchema = v.object({
   createdAt: v.string(),
   id: v.string(),
 });
 
+/**
+ * Read and validate a JSON request body; any mismatch is the same generic 400.
+ * With `fallback`, a missing or malformed body validates as that value instead.
+ */
+async function parseBody<TSchema extends v.GenericSchema>(
+  schema: TSchema,
+  request: HonoRequest,
+  fallback?: Record<string, never>,
+): Promise<v.InferOutput<TSchema>> {
+  const input =
+    fallback == null ? await request.json() : await request.json().catch(() => fallback);
+  const result = v.safeParse(schema, input);
+  if (!result.success) throw new PolicyError(400, "request body is invalid");
+  return result.output;
+}
+
 type AppBindings = { DB: D1Database };
+
+type AppEnv = { Bindings: AppBindings; Variables: Variables };
 
 type AppOptions = {
   bootstrapToken: string;
-  activeMasterKeyFingerprint: string;
-  keyring?: VaultKeyring;
-  inactiveMasterKey?: string;
+  /** The root-key slot that is not live; `POST /v1/master-keys/prepare` wraps for it. */
+  inactiveMasterKey: string;
   issuanceFetch?: typeof fetch;
   now?: () => number;
 };
 
-export function createApp(
-  vaultCrypto: VaultCrypto,
-  options: AppOptions,
-): Hono<{ Bindings: AppBindings; Variables: Variables }> {
-  const app = new Hono<{ Bindings: AppBindings; Variables: Variables }>();
+/** Refuse non-operator keys with a 403 carrying the route's own message. */
+function operatorOnly(message: string) {
+  return createMiddleware<AppEnv>(async (c, next) => {
+    if (!isOperator(c.get("key"))) throw new PolicyError(403, message);
+    await next();
+  });
+}
+
+export function createApp(keyring: VaultKeyring, options: AppOptions): Hono<AppEnv> {
+  const vaultCrypto = keyring.crypto;
+  const app = new Hono<AppEnv>();
+  const manageProjects = operatorOnly("cannot manage projects");
+  const manageKeys = operatorOnly("cannot manage keys");
+  const manageMasterKeys = operatorOnly("cannot manage master keys");
 
   app.onError((error, c) => {
-    if (
-      error instanceof PolicyError ||
-      error instanceof StoreError ||
-      error instanceof KeyringError
-    ) {
+    if (error instanceof PolicyError) {
       return c.json({ error: error.message }, error.status);
     }
+    // Issuance request schemas are zod; see `issuance/contracts.ts`.
     if (error instanceof z.ZodError) {
       return c.json({ error: "request body is invalid" }, 400);
     }
@@ -156,7 +169,7 @@ export function createApp(
       ok: true,
       name: "bwf-vault",
       bootstrapped: await store.isBootstrapped(),
-      activeMasterKeyFingerprint: options.activeMasterKeyFingerprint,
+      activeMasterKeyFingerprint: keyring.activeFingerprint,
     });
   });
 
@@ -184,45 +197,49 @@ export function createApp(
   });
 
   app.route("/issuance", issuanceRoutes(vaultCrypto, options.issuanceFetch, options.now));
-  app.get("/v1/issuance/requests/:id", async (c) => {
-    if (!canManageKeys(c.get("key")))
-      throw new PolicyError(403, "only operators inspect issuer requests");
-    const store = new IssuanceStore(c.env.DB, vaultCrypto);
-    const request = await store.request(issuanceId.parse(c.req.param("id")));
-    const eventRows = await c.env.DB.prepare(
-      "SELECT actor, action, created_at FROM issuance_events WHERE request_id = ? ORDER BY created_at, rowid",
-    )
-      .bind(request.id)
-      .all<{ actor: string; action: string; created_at: number }>();
-    const events = eventRows.results;
-    return c.json({
-      ...(await new IssuanceService(store).view(request)),
-      subject: request.subject,
-      sessionId: request.auth_hash,
-      providerTokenId: request.token_id,
-      events,
-    });
-  });
-  app.get("/v1/issuance/setup", async (c) => {
-    if (!canManageKeys(c.get("key")))
-      throw new PolicyError(403, "only operators inspect issuer setup");
-    return c.json(await new IssuanceStore(c.env.DB, vaultCrypto).setup());
-  });
-  app.post("/v1/issuance/admin", async (c) => {
-    if (!canManageKeys(c.get("key")))
-      throw new PolicyError(403, "only operators manage issuer configuration");
-    await new IssuanceStore(c.env.DB, vaultCrypto).admin(
-      adminSchema.parse(await c.req.json()),
-      c.get("key").keyPrefix,
-    );
-    return c.json({ ok: true });
-  });
+  app.get(
+    "/v1/issuance/requests/:id",
+    operatorOnly("only operators inspect issuer requests"),
+    async (c) => {
+      const store = new IssuanceStore(c.env.DB, vaultCrypto);
+      const request = await store.request(issuanceId.parse(c.req.param("id")));
+      const eventRows = await c.env.DB.prepare(
+        "SELECT actor, action, created_at FROM issuance_events WHERE request_id = ? ORDER BY created_at, rowid",
+      )
+        .bind(request.id)
+        .all<{ actor: string; action: string; created_at: number }>();
+      const events = eventRows.results;
+      return c.json({
+        ...(await new IssuanceService(store).view(request)),
+        subject: request.subject,
+        sessionId: request.auth_hash,
+        providerTokenId: request.token_id,
+        events,
+      });
+    },
+  );
+  app.get(
+    "/v1/issuance/setup",
+    operatorOnly("only operators inspect issuer setup"),
+    async (c) => c.json(await new IssuanceStore(c.env.DB, vaultCrypto).setup()),
+  );
+  app.post(
+    "/v1/issuance/admin",
+    operatorOnly("only operators manage issuer configuration"),
+    async (c) => {
+      await new IssuanceStore(c.env.DB, vaultCrypto).admin(
+        adminSchema.parse(await c.req.json()),
+        c.get("key").keyPrefix,
+      );
+      return c.json({ ok: true });
+    },
+  );
 
   app.post("/mcp", (c) => handleMcp(c));
 
   app.post("/v1/bootstrap", async (c) => {
     const store = c.get("store");
-    const body = bootstrapSchema.parse(await c.req.json().catch(() => ({})));
+    const body = await parseBody(bootstrapSchema, c.req, {});
     const generated = randomApiKey("user");
     await store.claimBootstrapKey({
       plaintext: generated.plaintext,
@@ -242,10 +259,8 @@ export function createApp(
     return c.json({ projects: await c.get("store").listProjects() });
   });
 
-  app.post("/v1/projects", async (c) => {
-    if (!canManageProjects(c.get("key")))
-      throw new PolicyError(403, "cannot manage projects");
-    const body = createProjectSchema.parse(await c.req.json());
+  app.post("/v1/projects", manageProjects, async (c) => {
+    const body = await parseBody(nameSchema, c.req);
     const project = await c.get("store").createProject(body.name);
     await c.get("store").audit({
       keyPrefix: c.get("key").keyPrefix,
@@ -255,11 +270,9 @@ export function createApp(
     return c.json(project, 201);
   });
 
-  app.delete("/v1/projects/:project", async (c) => {
-    if (!canManageProjects(c.get("key")))
-      throw new PolicyError(403, "cannot manage projects");
+  app.delete("/v1/projects/:project", manageProjects, async (c) => {
     const deleted = await c.get("store").deleteProject(c.req.param("project"));
-    if (!deleted) throw new StoreError(404, "project not found");
+    if (!deleted) throw new PolicyError(404, "project not found");
     await c.get("store").audit({
       keyPrefix: c.get("key").keyPrefix,
       action: "project_delete",
@@ -271,17 +284,15 @@ export function createApp(
   app.get("/v1/projects/:project/environments", async (c) => {
     const store = c.get("store");
     const project = await store.getProject(c.req.param("project"));
-    if (project == null) throw new StoreError(404, "project not found");
+    if (project == null) throw new PolicyError(404, "project not found");
     return c.json({ environments: await store.listEnvironments(project.id) });
   });
 
-  app.post("/v1/projects/:project/environments", async (c) => {
-    if (!canManageProjects(c.get("key")))
-      throw new PolicyError(403, "cannot manage projects");
+  app.post("/v1/projects/:project/environments", manageProjects, async (c) => {
     const store = c.get("store");
     const project = await store.getProject(c.req.param("project"));
-    if (project == null) throw new StoreError(404, "project not found");
-    const body = createEnvSchema.parse(await c.req.json());
+    if (project == null) throw new PolicyError(404, "project not found");
+    const body = await parseBody(nameSchema, c.req);
     await store.createEnvironment(project.id, body.name);
     await store.audit({
       keyPrefix: c.get("key").keyPrefix,
@@ -291,14 +302,12 @@ export function createApp(
     return c.json({ name: body.name.toLowerCase() }, 201);
   });
 
-  app.delete("/v1/projects/:project/environments/:env", async (c) => {
-    if (!canManageProjects(c.get("key")))
-      throw new PolicyError(403, "cannot manage projects");
+  app.delete("/v1/projects/:project/environments/:env", manageProjects, async (c) => {
     const store = c.get("store");
     const project = await store.getProject(c.req.param("project"));
-    if (project == null) throw new StoreError(404, "project not found");
+    if (project == null) throw new PolicyError(404, "project not found");
     const deleted = await store.deleteEnvironment(project.id, c.req.param("env"));
-    if (!deleted) throw new StoreError(404, "environment not found");
+    if (!deleted) throw new PolicyError(404, "environment not found");
     await store.audit({
       keyPrefix: c.get("key").keyPrefix,
       action: "environment_delete",
@@ -345,7 +354,7 @@ export function createApp(
     assertCanDecrypt(key);
     const { environmentId } = await store.requireEnvironment(project, env);
     const secret = await store.getSecretByName(environmentId, name);
-    if (secret == null) throw new StoreError(404, "secret not found");
+    if (secret == null) throw new PolicyError(404, "secret not found");
     if (!valueVisibleOnGet(key, secret.kind)) {
       throw new PolicyError(403, "sealed secret values are not returned");
     }
@@ -361,10 +370,9 @@ export function createApp(
   app.post(
     "/v1/projects/:project/environments/:env/secrets/:name",
     bodyLimit({ maxSize: 65536 }),
+    operatorOnly("secret collection requires an operator login"),
     async (c) => {
       const key = c.get("key");
-      if (key.type !== "user")
-        throw new PolicyError(403, "secret collection requires an operator login");
       assertCanWrite(key);
       let body: unknown;
       try {
@@ -401,7 +409,7 @@ export function createApp(
     assertScope(key, project, env);
     assertCanWrite(key);
     const { environmentId } = await store.requireEnvironment(project, env);
-    const body = patchSecretsSchema.parse(await c.req.json());
+    const body = await parseBody(patchSecretsSchema, c.req);
     for (const item of body.set ?? []) {
       const kind: SecretKind = item.kind ?? "secret";
       let value = item.value;
@@ -455,7 +463,7 @@ export function createApp(
     assertScope(key, project, env);
     assertCanWrite(key);
     const { environmentId } = await store.requireEnvironment(project, env);
-    const body = putRouteSchema.parse(await c.req.json());
+    const body = await parseBody(putRouteSchema, c.req);
     const preset = body.preset != null ? routePreset(body.preset) : null;
     const built =
       preset ??
@@ -485,16 +493,14 @@ export function createApp(
     return c.json({ ok: true, host });
   });
 
-  app.get("/v1/keys", async (c) => {
-    if (!canManageKeys(c.get("key"))) throw new PolicyError(403, "cannot manage keys");
+  app.get("/v1/keys", manageKeys, async (c) => {
     const includeRevoked = c.req.query("includeRevoked") === "1";
     const keys = await c.get("store").listKeys(includeRevoked);
     return c.json({ keys: keys.map(publicKeyMeta) });
   });
 
-  app.post("/v1/keys", async (c) => {
-    if (!canManageKeys(c.get("key"))) throw new PolicyError(403, "cannot manage keys");
-    const body = createKeySchema.parse(await c.req.json());
+  app.post("/v1/keys", manageKeys, async (c) => {
+    const body = await parseBody(createKeySchema, c.req);
     const generated = randomApiKey(body.type);
     const permission: Permission =
       body.type === "user" ? "full" : (body.permission ?? "read");
@@ -520,13 +526,12 @@ export function createApp(
     return c.json({ key: generated.plaintext, prefix: generated.prefix }, 201);
   });
 
-  app.post("/v1/keys/:prefix/rotate", async (c) => {
-    if (!canManageKeys(c.get("key"))) throw new PolicyError(403, "cannot manage keys");
+  app.post("/v1/keys/:prefix/rotate", manageKeys, async (c) => {
     const store = c.get("store");
     const current = await store.findKeyByPrefix(c.req.param("prefix"));
-    if (current == null) throw new StoreError(404, "key not found");
+    if (current == null) throw new PolicyError(404, "key not found");
     assertActiveKey(current);
-    const body = rotateKeySchema.parse(await c.req.json().catch(() => ({})));
+    const body = await parseBody(rotateKeySchema, c.req, {});
     const generated = randomApiKey(current.type);
     await store.rotateKey(current, {
       plaintext: generated.plaintext,
@@ -541,10 +546,9 @@ export function createApp(
     return c.json({ key: generated.plaintext, prefix: generated.prefix }, 201);
   });
 
-  app.delete("/v1/keys/:prefix", async (c) => {
-    if (!canManageKeys(c.get("key"))) throw new PolicyError(403, "cannot manage keys");
+  app.delete("/v1/keys/:prefix", manageKeys, async (c) => {
     const revoked = await c.get("store").revokeKey(c.req.param("prefix"));
-    if (!revoked) throw new StoreError(404, "key not found");
+    if (!revoked) throw new PolicyError(404, "key not found");
     await c.get("store").audit({
       keyPrefix: c.get("key").keyPrefix,
       action: "key_revoke",
@@ -553,19 +557,17 @@ export function createApp(
     return c.json({ ok: true });
   });
 
-  app.get("/v1/audit", async (c) => {
-    if (!canManageKeys(c.get("key"))) throw new PolicyError(403, "cannot read audit");
+  app.get("/v1/audit", operatorOnly("cannot read audit"), async (c) => {
     const limit = Number(c.req.query("limit") ?? "50");
     if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
       throw new PolicyError(400, "audit limit must be an integer from 1 to 200");
     }
     const cursor = decodeAuditCursor(c.req.query("cursor"));
-    const auditInput: Parameters<VaultStore["listAudit"]>[0] = { limit };
-    if (cursor != null) {
-      auditInput.beforeCreatedAt = cursor.createdAt;
-      auditInput.beforeId = cursor.id;
-    }
-    const events = await c.get("store").listAudit(auditInput);
+    const events = await c.get("store").listAudit({
+      limit,
+      beforeCreatedAt: cursor?.createdAt,
+      beforeId: cursor?.id,
+    });
     const last = events.at(-1);
     await c.get("store").audit({
       keyPrefix: c.get("key").keyPrefix,
@@ -581,28 +583,15 @@ export function createApp(
     });
   });
 
-  app.get("/v1/master-keys", async (c) => {
-    if (!canManageKeys(c.get("key")))
-      throw new PolicyError(403, "cannot manage master keys");
-    if (options.keyring == null) {
-      throw new KeyringError(501, "master-key management requires the Worker runtime");
-    }
+  app.get("/v1/master-keys", manageMasterKeys, async (c) => {
     return c.json({
-      activeFingerprint: options.keyring.activeFingerprint,
-      wraps: await options.keyring.list(c.env.DB),
+      activeFingerprint: keyring.activeFingerprint,
+      wraps: await keyring.list(c.env.DB),
     });
   });
 
-  app.post("/v1/master-keys/prepare", async (c) => {
-    if (!canManageKeys(c.get("key")))
-      throw new PolicyError(403, "cannot manage master keys");
-    if (options.keyring == null || options.inactiveMasterKey == null) {
-      throw new KeyringError(501, "master-key management requires the Worker runtime");
-    }
-    const fingerprint = await options.keyring.prepare(
-      c.env.DB,
-      options.inactiveMasterKey,
-    );
+  app.post("/v1/master-keys/prepare", manageMasterKeys, async (c) => {
+    const fingerprint = await keyring.prepare(c.env.DB, options.inactiveMasterKey);
     await c.get("store").audit({
       keyPrefix: c.get("key").keyPrefix,
       action: "master_key_prepare",
@@ -611,13 +600,8 @@ export function createApp(
     return c.json({ fingerprint });
   });
 
-  app.delete("/v1/master-keys/:fingerprint", async (c) => {
-    if (!canManageKeys(c.get("key")))
-      throw new PolicyError(403, "cannot manage master keys");
-    if (options.keyring == null) {
-      throw new KeyringError(501, "master-key management requires the Worker runtime");
-    }
-    await options.keyring.retire(c.env.DB, c.req.param("fingerprint"));
+  app.delete("/v1/master-keys/:fingerprint", manageMasterKeys, async (c) => {
+    await keyring.retire(c.env.DB, c.req.param("fingerprint"));
     await c.get("store").audit({
       keyPrefix: c.get("key").keyPrefix,
       action: "master_key_retire",
@@ -631,7 +615,7 @@ export function createApp(
 
 async function attachStore(
   c: { env: AppBindings; set: (key: "store", value: VaultStore) => void },
-  vaultCrypto: VaultCrypto,
+  vaultCrypto: VaultKeyring["crypto"],
 ): Promise<void> {
   c.set("store", new VaultStore(c.env.DB, vaultCrypto));
 }

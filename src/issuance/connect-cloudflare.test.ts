@@ -25,69 +25,64 @@ function provider(
   } = {},
 ) {
   const calls: Request[] = [];
-  const send: typeof fetch = Object.assign(
-    async (input: RequestInfo | URL, init?: RequestInit) => {
-      const request = new Request(input, init);
-      calls.push(request);
-      const url = new URL(request.url);
-      expect(request.method).toBe("GET");
-      expect(request.redirect).toBe("error");
-      if (url.hostname === "api.github.com") {
-        expect(request.headers.has("authorization")).toBe(false);
-        return Response.json({
-          id: url.pathname.endsWith("outsider") ? 202 : 101,
-          login: url.pathname.split("/").at(-1),
-          type: "User",
-        });
-      }
-      expect(url.origin).toBe("https://api.cloudflare.com");
-      expect(request.headers.get("authorization")).toBe(`Bearer ${token}`);
-      if (options.denied) return Response.json({ error: token }, { status: 403 });
-      if (url.pathname.endsWith("/accounts")) {
-        const page = Number(url.searchParams.get("page"));
-        return Response.json({
-          success: true,
-          result: [
-            { id: page === 2 ? "d".repeat(32) : account, name: `Account ${page}` },
+  const send = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    calls.push(request);
+    const url = new URL(request.url);
+    expect(request.method).toBe("GET");
+    expect(request.redirect).toBe("error");
+    if (url.hostname === "api.github.com") {
+      expect(request.headers.has("authorization")).toBe(false);
+      return Response.json({
+        id: url.pathname.endsWith("outsider") ? 202 : 101,
+        login: url.pathname.split("/").at(-1),
+        type: "User",
+      });
+    }
+    expect(url.origin).toBe("https://api.cloudflare.com");
+    expect(request.headers.get("authorization")).toBe(`Bearer ${token}`);
+    if (options.denied) return Response.json({ error: token }, { status: 403 });
+    if (url.pathname.endsWith("/accounts")) {
+      const page = Number(url.searchParams.get("page"));
+      return Response.json({
+        success: true,
+        result: [{ id: page === 2 ? "d".repeat(32) : account, name: `Account ${page}` }],
+        result_info: { total_pages: options.paginated ? 2 : 1 },
+      });
+    }
+    if (url.pathname.endsWith("/verify"))
+      return Response.json({
+        success: true,
+        result: { id: tokenId, status: options.inactive ? "expired" : "active" },
+      });
+    if (url.pathname.endsWith(`/tokens/${tokenId}`))
+      return Response.json({
+        success: true,
+        result: {
+          policies: [
+            {
+              effect: "allow",
+              permission_groups: [
+                {
+                  name: options.noManagement
+                    ? "Account API Tokens Read"
+                    : "Account API Tokens Write",
+                },
+              ],
+            },
           ],
-          result_info: { total_pages: options.paginated ? 2 : 1 },
-        });
-      }
-      if (url.pathname.endsWith("/verify"))
-        return Response.json({
-          success: true,
-          result: { id: tokenId, status: options.inactive ? "expired" : "active" },
-        });
-      if (url.pathname.endsWith(`/tokens/${tokenId}`))
-        return Response.json({
-          success: true,
-          result: {
-            policies: [
-              {
-                effect: "allow",
-                permission_groups: [
-                  {
-                    name: options.noManagement
-                      ? "Account API Tokens Read"
-                      : "Account API Tokens Write",
-                  },
-                ],
-              },
-            ],
-          },
-        });
-      if (url.pathname.endsWith("/zones")) {
-        expect(url.searchParams.get("account.id")).toBe(account);
-        return Response.json({
-          success: true,
-          result: [{ id: zone, name: "example.test" }],
-          result_info: { total_pages: 1 },
-        });
-      }
-      throw new Error(`Unexpected test request: ${url.pathname}`);
-    },
-    { preconnect: fetch.preconnect },
-  );
+        },
+      });
+    if (url.pathname.endsWith("/zones")) {
+      expect(url.searchParams.get("account.id")).toBe(account);
+      return Response.json({
+        success: true,
+        result: [{ id: zone, name: "example.test" }],
+        result_info: { total_pages: 1 },
+      });
+    }
+    throw new Error(`Unexpected test request: ${url.pathname}`);
+  };
   return { send, calls };
 }
 function prompts(answers: Array<string | boolean | string[]>) {

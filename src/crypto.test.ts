@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { generateMasterKey, parseMasterKey, VaultCrypto } from "./crypto.ts";
+import { parseMasterKey, VaultCrypto } from "./crypto.ts";
 
 describe("crypto", () => {
   test("rejects a missing or short master key", () => {
@@ -10,7 +10,7 @@ describe("crypto", () => {
   });
 
   test("encrypts with a unique IV and decrypts", async () => {
-    const vaultCrypto = await VaultCrypto.fromMasterKey(generateMasterKey());
+    const vaultCrypto = await VaultCrypto.generate();
     const first = await vaultCrypto.encrypt("hunter2");
     const second = await vaultCrypto.encrypt("hunter2");
     expect(first).not.toBe(second);
@@ -19,7 +19,7 @@ describe("crypto", () => {
   });
 
   test("lookup hashes are deterministic and not the plaintext", async () => {
-    const vaultCrypto = await VaultCrypto.fromMasterKey(generateMasterKey());
+    const vaultCrypto = await VaultCrypto.generate();
     const hash = await vaultCrypto.lookupHash("DATABASE_URL");
     expect(hash).toBe(await vaultCrypto.lookupHash("DATABASE_URL"));
     expect(hash.includes("DATABASE")).toBe(false);

@@ -1,31 +1,29 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { VaultClient } from "../src/client.ts";
-import { readConfig } from "../src/config.ts";
 import {
   assertGitHubAuthorizationPage,
   assertGitHubAuthorizationUrl,
 } from "../src/operational-proofs.ts";
 import * as v from "valibot";
+import { loadEnvironment, required } from "./operator.ts";
 
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 const origin = "http://127.0.0.1:5173";
-const project = "bwf-shadow";
 const serverId = "00000000-0000-4000-8000-0000000000c4";
 const channelId = "00000000-0000-4000-8000-0000000000c3";
 
 type Child = ReturnType<typeof Bun.spawn>;
 
 async function main(): Promise<void> {
-  const client = operatorClient();
-  const worker = await loadEnvironment(client, "prod-worker");
+  const worker = await loadEnvironment("prod-worker");
+  const clientId = (name: string) => required(worker, name).trim();
   const child = Bun.spawn(
     [
       "vault",
       "run",
       "--project",
-      project,
+      "bwf-shadow",
       "--env",
       "prod-worker",
       "--",
@@ -47,7 +45,7 @@ async function main(): Promise<void> {
     const identity = await beginIdentityAuthorization();
     assertGitHubAuthorizationUrl(identity, {
       callbackUrl: `${origin}/api/auth/callback/github`,
-      clientId: required(worker, "GITHUB_CLIENT_ID"),
+      clientId: clientId("GITHUB_CLIENT_ID"),
       pkce: true,
       scopes: ["read:user", "user:email"],
     });
@@ -59,12 +57,10 @@ async function main(): Promise<void> {
     const app = await beginGitHubAppAuthorization();
     assertGitHubAuthorizationUrl(app, {
       callbackUrl: `${origin}/api/github-app/callback`,
-      clientId: required(worker, "GITHUB_APP_CLIENT_ID"),
+      clientId: clientId("GITHUB_APP_CLIENT_ID"),
       pkce: true,
     });
-    if (
-      required(worker, "GITHUB_CLIENT_ID") === required(worker, "GITHUB_APP_CLIENT_ID")
-    ) {
+    if (clientId("GITHUB_CLIENT_ID") === clientId("GITHUB_APP_CLIENT_ID")) {
       throw new Error("identity OAuth and GitHub App unexpectedly share a client id");
     }
     await assertGitHubRecognizes(app);
@@ -73,28 +69,6 @@ async function main(): Promise<void> {
     child.kill("SIGTERM");
     await child.exited;
   }
-}
-
-function operatorClient(): VaultClient {
-  const config = readConfig();
-  if (config.apiUrl == null || config.apiKey == null) {
-    throw new Error("vault operator configuration is missing");
-  }
-  return new VaultClient(config.apiUrl, config.apiKey);
-}
-
-async function loadEnvironment(
-  client: VaultClient,
-  environment: string,
-): Promise<ReadonlyMap<string, string>> {
-  const exported = await client.exportSecrets(project, environment);
-  return new Map(exported.secrets.map((secret) => [secret.name, secret.value]));
-}
-
-function required(secrets: ReadonlyMap<string, string>, name: string): string {
-  const value = secrets.get(name)?.trim();
-  if (value === undefined || value === "") throw new Error(`${name} is absent`);
-  return value;
 }
 
 async function waitForStack(child: Child): Promise<void> {
@@ -126,13 +100,8 @@ async function beginIdentityAuthorization(): Promise<string> {
   if (!response.ok) throw new Error(`identity OAuth start failed (${response.status})`);
   const location = response.headers.get("location");
   if (location !== null) return location;
-  const parsed = v.safeParse(
-    v.looseObject({ url: v.optional(v.string()) }),
-    await response.json(),
-  );
-  if (!parsed.success || !v.is(v.string(), parsed.output.url)) {
-    throw new Error("identity OAuth returned no URL");
-  }
+  const parsed = v.safeParse(v.object({ url: v.string() }), await response.json());
+  if (!parsed.success) throw new Error("identity OAuth returned no URL");
   return parsed.output.url;
 }
 

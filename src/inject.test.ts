@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 
 import { VaultClient } from "./client.ts";
-import { applyProcessEnv, InjectError, loadRequiredSecretValues } from "./inject.ts";
+import { InjectError, loadRequiredSecretValues } from "./inject.ts";
 import type { RepoContext } from "./repo-config.ts";
 import { WranglerEnvironmentError } from "./repo-config.ts";
 
@@ -64,13 +64,6 @@ describe("inject", () => {
       expect(values).toEqual({ NEED_A: "one" });
       expect(Object.hasOwn(values, "EXTRA")).toBe(false);
     });
-  });
-
-  test("applyProcessEnv writes those names only", () => {
-    applyProcessEnv({ NEED_A: "one" });
-    const injected = process.env["NEED_A"];
-    delete process.env["NEED_A"];
-    expect(injected).toBe("one");
   });
 });
 

@@ -37,10 +37,8 @@ export default {
         readRuntimeSecret(env.BOOTSTRAP_TOKEN, "BOOTSTRAP_TOKEN"),
       ]);
       const keyring = await VaultKeyring.open(env.DB, masterKeys.active);
-      return await createApp(keyring.crypto, {
+      return await createApp(keyring, {
         bootstrapToken,
-        activeMasterKeyFingerprint: keyring.activeFingerprint,
-        keyring,
         inactiveMasterKey: masterKeys.inactive,
       }).fetch(request, env, ctx);
     } catch (error) {

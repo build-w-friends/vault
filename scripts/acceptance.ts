@@ -34,17 +34,16 @@ writeFileSync(
 
 let worker: WorkerProcess | null = null;
 try {
-  await checked([
-    "bunx",
-    "wrangler",
-    "d1",
-    "migrations",
-    "apply",
-    "DB",
-    "--local",
-    "--persist-to",
-    state,
-  ]);
+  const migrated =
+    await Bun.$`bunx wrangler d1 migrations apply DB --local --persist-to ${state}`
+      .cwd(packageRoot)
+      .quiet()
+      .nothrow();
+  if (migrated.exitCode !== 0) {
+    throw new Error(
+      `wrangler d1 migrations apply failed:\n${migrated.stdout.toString()}${migrated.stderr.toString()}`,
+    );
+  }
   worker = Bun.spawn(
     [
       "bunx",
@@ -92,22 +91,6 @@ try {
     await worker.exited;
   }
   rmSync(state, { recursive: true, force: true });
-}
-
-async function checked(command: string[]): Promise<void> {
-  const child = Bun.spawn(command, {
-    cwd: packageRoot,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [code, stdout, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]);
-  if (code !== 0) {
-    throw new Error(`command failed (${command.join(" ")}):\n${stdout}${stderr}`);
-  }
 }
 
 async function waitForWorker(url: string, child: WorkerProcess): Promise<void> {

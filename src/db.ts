@@ -10,15 +10,14 @@
  * index exactly, so a deep page is a range scan and a row inserted mid-scroll
  * cannot shift the window.
  *
- * `StoreError` carries the HTTP status a failure should surface, which is what
- * lets `app.ts` translate a constraint violation into a 404 or 409 without
- * re-deriving the reason.
+ * Failures throw `PolicyError` with the HTTP status they should surface, which
+ * is what lets `app.ts` translate a constraint violation into a 404 or 409
+ * without re-deriving the reason.
  *
  * @see {@link https://vault.buildwithfriends.dev/reference/database/}
  */
 import type { VaultCrypto } from "./crypto.ts";
-import * as v from "valibot";
-import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { PolicyError } from "./policy.ts";
 import type {
   ApiKeyRecord,
   AuditAction,
@@ -80,8 +79,14 @@ type AuditRow = {
   created_at: string;
 };
 
-function nowIso(clock: () => Date = () => new Date()): string {
-  return clock().toISOString();
+/** `mcp.ts` imports the store's error under this name. */
+
+const LAST_USER_KEY = "cannot revoke the last active user key";
+const INSERT_ENVIRONMENT =
+  "INSERT INTO environments (id, project_id, name, created_at) VALUES (?, ?, ?, ?)";
+
+function nowIso(): string {
+  return new Date().toISOString();
 }
 
 function newId(): string {
@@ -97,13 +102,6 @@ export class VaultStore {
     private readonly db: D1Database,
     private readonly vaultCrypto: VaultCrypto,
   ) {}
-
-  async countKeys(): Promise<number> {
-    const row = await this.db
-      .prepare("SELECT COUNT(*) AS n FROM api_keys")
-      .first<{ n: number }>();
-    return row?.n ?? 0;
-  }
 
   async insertKey(input: {
     plaintext: string;
@@ -143,7 +141,7 @@ export class VaultStore {
         }),
       ]);
     } catch {
-      throw new StoreError(409, "already bootstrapped");
+      throw new PolicyError(409, "already bootstrapped");
     }
   }
 
@@ -222,21 +220,17 @@ export class VaultStore {
   }
 
   async revokeKey(prefix: string): Promise<boolean> {
-    try {
-      const result = await this.db
-        .prepare(
-          `UPDATE api_keys SET revoked = 1, revoked_at = ?
-           WHERE key_prefix = ? AND revoked = 0`,
-        )
-        .bind(nowIso(), prefix)
-        .run();
-      return (result.meta.changes ?? 0) > 0;
-    } catch (error) {
-      if (String(error).includes("cannot revoke the last active user key")) {
-        throw new StoreError(409, "cannot revoke the last active user key");
-      }
-      throw error;
-    }
+    const result = await guardLastUserKey(this.revokeStatement(prefix).run());
+    return (result.meta.changes ?? 0) > 0;
+  }
+
+  private revokeStatement(prefix: string): D1PreparedStatement {
+    return this.db
+      .prepare(
+        `UPDATE api_keys SET revoked = 1, revoked_at = ?
+         WHERE key_prefix = ? AND revoked = 0`,
+      )
+      .bind(nowIso(), prefix);
   }
 
   async rotateKey(
@@ -247,8 +241,8 @@ export class VaultStore {
       expiresAt: string;
     },
   ): Promise<void> {
-    try {
-      await this.db.batch([
+    await guardLastUserKey(
+      this.db.batch([
         await this.prepareInsertKey({
           ...replacement,
           type: current.type,
@@ -257,19 +251,9 @@ export class VaultStore {
           label: current.label,
           scopes: current.scopes,
         }),
-        this.db
-          .prepare(
-            `UPDATE api_keys SET revoked = 1, revoked_at = ?
-             WHERE key_prefix = ? AND revoked = 0`,
-          )
-          .bind(nowIso(), current.keyPrefix),
-      ]);
-    } catch (error) {
-      if (String(error).includes("cannot revoke the last active user key")) {
-        throw new StoreError(409, "cannot revoke the last active user key");
-      }
-      throw error;
-    }
+        this.revokeStatement(current.keyPrefix),
+      ]),
+    );
   }
 
   async touchKey(prefix: string): Promise<void> {
@@ -289,25 +273,14 @@ export class VaultStore {
         .run();
     } catch (error) {
       if (isUniqueConstraintFailure(error)) {
-        throw new StoreError(409, `project "${normalized}" already exists`);
+        throw new PolicyError(409, `project "${normalized}" already exists`);
       }
       throw error;
     }
-    const devId = newId();
-    const prodId = newId();
     const created = nowIso();
-    await this.db
-      .prepare(
-        "INSERT INTO environments (id, project_id, name, created_at) VALUES (?, ?, ?, ?)",
-      )
-      .bind(devId, id, "dev", created)
-      .run();
-    await this.db
-      .prepare(
-        "INSERT INTO environments (id, project_id, name, created_at) VALUES (?, ?, ?, ?)",
-      )
-      .bind(prodId, id, "prod", created)
-      .run();
+    for (const env of ["dev", "prod"]) {
+      await this.db.prepare(INSERT_ENVIRONMENT).bind(newId(), id, env, created).run();
+    }
     return { id, name: normalized };
   }
 
@@ -336,14 +309,12 @@ export class VaultStore {
     const normalized = name.toLowerCase();
     try {
       await this.db
-        .prepare(
-          "INSERT INTO environments (id, project_id, name, created_at) VALUES (?, ?, ?, ?)",
-        )
+        .prepare(INSERT_ENVIRONMENT)
         .bind(newId(), projectId, normalized, nowIso())
         .run();
     } catch (error) {
       if (isUniqueConstraintFailure(error)) {
-        throw new StoreError(409, `environment "${normalized}" already exists`);
+        throw new PolicyError(409, `environment "${normalized}" already exists`);
       }
       throw error;
     }
@@ -380,9 +351,9 @@ export class VaultStore {
     envName: string,
   ): Promise<{ projectId: string; environmentId: string }> {
     const project = await this.getProject(projectName);
-    if (project == null) throw new StoreError(404, "project not found");
+    if (project == null) throw new PolicyError(404, "project not found");
     const environment = await this.getEnvironment(project.id, envName);
-    if (environment == null) throw new StoreError(404, "environment not found");
+    if (environment == null) throw new PolicyError(404, "environment not found");
     return { projectId: project.id, environmentId: environment.id };
   }
 
@@ -394,6 +365,7 @@ export class VaultStore {
     return result.results ?? [];
   }
 
+  /** Names and kinds only; values stay encrypted. */
   async listSecretMeta(environmentId: string): Promise<SecretMeta[]> {
     const rows = await this.listSecretRows(environmentId);
     const meta: SecretMeta[] = [];
@@ -403,22 +375,22 @@ export class VaultStore {
         kind: row.kind,
       });
     }
-    meta.sort((left, right) => left.name.localeCompare(right.name));
-    return meta;
+    return meta.sort(byName);
   }
 
   async listSecrets(environmentId: string): Promise<SecretRecord[]> {
     const rows = await this.listSecretRows(environmentId);
     const secrets: SecretRecord[] = [];
-    for (const row of rows) {
-      secrets.push({
-        name: await this.vaultCrypto.decrypt(row.key_encrypted),
-        value: await this.vaultCrypto.decrypt(row.value_encrypted),
-        kind: row.kind,
-      });
-    }
-    secrets.sort((left, right) => left.name.localeCompare(right.name));
-    return secrets;
+    for (const row of rows) secrets.push(await this.decryptSecret(row));
+    return secrets.sort(byName);
+  }
+
+  private async decryptSecret(row: SecretRow): Promise<SecretRecord> {
+    return {
+      name: await this.vaultCrypto.decrypt(row.key_encrypted),
+      value: await this.vaultCrypto.decrypt(row.value_encrypted),
+      kind: row.kind,
+    };
   }
 
   async createSecret(
@@ -427,26 +399,24 @@ export class VaultStore {
     value: string,
     kind: SecretKind,
   ): Promise<void> {
-    if (value.length === 0) throw new StoreError(400, "secret value must not be empty");
-    const row = v.parse(
-      v.nullable(v.object({ id: v.string() })),
-      await this.db
-        .prepare(
-          `INSERT INTO secrets (id, environment_id, key_encrypted, key_hash, value_encrypted, kind, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(environment_id, key_hash) DO NOTHING RETURNING id`,
-        )
-        .bind(
-          newId(),
-          environmentId,
-          await this.vaultCrypto.encrypt(name),
-          await this.vaultCrypto.lookupHash(name),
-          await this.vaultCrypto.encrypt(value),
-          kind,
-          nowIso(),
-        )
-        .first(),
-    );
-    if (!row) throw new StoreError(409, "secret already exists; no value was changed");
+    if (value.length === 0) throw new PolicyError(400, "secret value must not be empty");
+    const row = await this.db
+      .prepare(
+        `INSERT INTO secrets (id, environment_id, key_encrypted, key_hash, value_encrypted, kind, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(environment_id, key_hash) DO NOTHING RETURNING id`,
+      )
+      .bind(
+        newId(),
+        environmentId,
+        await this.vaultCrypto.encrypt(name),
+        await this.vaultCrypto.lookupHash(name),
+        await this.vaultCrypto.encrypt(value),
+        kind,
+        nowIso(),
+      )
+      .first<{ id: string }>();
+    if (row == null)
+      throw new PolicyError(409, "secret already exists; no value was changed");
   }
 
   async setSecret(
@@ -455,30 +425,27 @@ export class VaultStore {
     value: string,
     kind: SecretKind,
   ): Promise<void> {
-    if (value.length === 0) throw new StoreError(400, "secret value must not be empty");
-    const keyHash = await this.vaultCrypto.lookupHash(name);
-    const keyEncrypted = await this.vaultCrypto.encrypt(name);
-    const valueEncrypted = await this.vaultCrypto.encrypt(value);
-    const existing = await this.db
-      .prepare("SELECT id FROM secrets WHERE environment_id = ? AND key_hash = ?")
-      .bind(environmentId, keyHash)
-      .first<{ id: string }>();
-    if (existing != null) {
-      await this.db
-        .prepare(
-          "UPDATE secrets SET key_encrypted = ?, value_encrypted = ?, kind = ?, updated_at = ? WHERE id = ?",
-        )
-        .bind(keyEncrypted, valueEncrypted, kind, nowIso(), existing.id)
-        .run();
-      return;
-    }
+    if (value.length === 0) throw new PolicyError(400, "secret value must not be empty");
     await this.db
       .prepare(
         `INSERT INTO secrets (
           id, environment_id, key_encrypted, key_hash, value_encrypted, kind, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(environment_id, key_hash) DO UPDATE SET
+          key_encrypted = excluded.key_encrypted,
+          value_encrypted = excluded.value_encrypted,
+          kind = excluded.kind,
+          updated_at = excluded.updated_at`,
       )
-      .bind(newId(), environmentId, keyEncrypted, keyHash, valueEncrypted, kind, nowIso())
+      .bind(
+        newId(),
+        environmentId,
+        await this.vaultCrypto.encrypt(name),
+        await this.vaultCrypto.lookupHash(name),
+        await this.vaultCrypto.encrypt(value),
+        kind,
+        nowIso(),
+      )
       .run();
   }
 
@@ -500,56 +467,30 @@ export class VaultStore {
       .prepare("SELECT * FROM secrets WHERE environment_id = ? AND key_hash = ?")
       .bind(environmentId, keyHash)
       .first<SecretRow>();
-    if (row == null) return null;
-    return {
-      name: await this.vaultCrypto.decrypt(row.key_encrypted),
-      value: await this.vaultCrypto.decrypt(row.value_encrypted),
-      kind: row.kind,
-    };
-  }
-
-  async ciphertextDump(environmentId: string): Promise<SecretRow[]> {
-    return this.listSecretRows(environmentId);
+    return row == null ? null : this.decryptSecret(row);
   }
 
   async upsertRoute(environmentId: string, route: RouteRecord): Promise<void> {
-    const secretHash = await this.vaultCrypto.lookupHash(route.secretName);
-    const existing = await this.db
-      .prepare("SELECT id FROM routes WHERE environment_id = ? AND host = ?")
-      .bind(environmentId, route.host)
-      .first<{ id: string }>();
-    const strip = JSON.stringify(route.stripHeaders);
-    if (existing != null) {
-      await this.db
-        .prepare(
-          `UPDATE routes SET secret_key_hash = ?, inject = ?, strip_headers = ?,
-            dummy_env_name = ?, dummy_value = ? WHERE id = ?`,
-        )
-        .bind(
-          secretHash,
-          route.inject,
-          strip,
-          route.dummyEnvName,
-          route.dummyValue,
-          existing.id,
-        )
-        .run();
-      return;
-    }
     await this.db
       .prepare(
         `INSERT INTO routes (
           id, environment_id, host, secret_key_hash, inject, strip_headers,
           dummy_env_name, dummy_value
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(environment_id, host) DO UPDATE SET
+          secret_key_hash = excluded.secret_key_hash,
+          inject = excluded.inject,
+          strip_headers = excluded.strip_headers,
+          dummy_env_name = excluded.dummy_env_name,
+          dummy_value = excluded.dummy_value`,
       )
       .bind(
         newId(),
         environmentId,
         route.host,
-        secretHash,
+        await this.vaultCrypto.lookupHash(route.secretName),
         route.inject,
-        strip,
+        JSON.stringify(route.stripHeaders),
         route.dummyEnvName,
         route.dummyValue,
       )
@@ -582,11 +523,6 @@ export class VaultStore {
       });
     }
     return routes;
-  }
-
-  async findRoute(environmentId: string, host: string): Promise<RouteRecord | null> {
-    const routes = await this.listRoutes(environmentId);
-    return routes.find((route) => route.host === host) ?? null;
   }
 
   async audit(input: {
@@ -700,11 +636,16 @@ export class VaultStore {
   }
 }
 
-export class StoreError extends Error {
-  readonly status: ContentfulStatusCode;
-  constructor(status: ContentfulStatusCode, message: string) {
-    super(message);
-    this.name = "StoreError";
-    this.status = status;
+function byName(left: { name: string }, right: { name: string }): number {
+  return left.name.localeCompare(right.name);
+}
+
+/** The `api_keys` trigger refuses to revoke the last active user key. */
+async function guardLastUserKey<T>(operation: Promise<T>): Promise<T> {
+  try {
+    return await operation;
+  } catch (error) {
+    if (String(error).includes(LAST_USER_KEY)) throw new PolicyError(409, LAST_USER_KEY);
+    throw error;
   }
 }

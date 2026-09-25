@@ -26,14 +26,12 @@ export class IssuanceStore {
     readonly now = () => Date.now(),
   ) {}
   async setup() {
-    const tenantRows = await this.db
+    const { results: tenants } = await this.db
       .prepare("SELECT id, label FROM issuance_tenants ORDER BY label, id")
       .all<{ id: string; label: string }>();
-    const tenants = tenantRows.results;
-    const memberRows = await this.db
+    const { results: members } = await this.db
       .prepare("SELECT tenant_id, subject FROM issuance_members ORDER BY subject")
       .all<{ tenant_id: string; subject: string }>();
-    const members = memberRows.results;
     const identity = await this.db
       .prepare("SELECT id FROM issuance_identity WHERE id = 1")
       .first();
@@ -91,10 +89,11 @@ export class IssuanceStore {
         );
         if (input.operation === "remove")
           statements.push(
-            this.db
-              .prepare(`UPDATE issuance_requests SET status = CASE WHEN status IN ('prepared','approved') THEN 'declined' ELSE 'revoking' END, updated_at = ?
-          WHERE subject = ? AND issuer_id IN (SELECT id FROM issuance_issuers WHERE tenant_id = ?) AND (status IN ('prepared','approved') OR (kind = 'create-token' AND status IN ('executing','issued','unknown')))`)
-              .bind(now, input.subject, input.tenantId),
+            this.cancelRequests(
+              "subject = ? AND issuer_id IN (SELECT id FROM issuance_issuers WHERE tenant_id = ?)",
+              input.subject,
+              input.tenantId,
+            ),
           );
         break;
       case "issuer": {
@@ -137,10 +136,7 @@ export class IssuanceStore {
               "UPDATE issuance_issuers SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
             )
             .bind(now, input.issuerId),
-          this.db
-            .prepare(`UPDATE issuance_requests SET status = CASE WHEN status IN ('prepared','approved') THEN 'declined' ELSE 'revoking' END, updated_at = ?
-          WHERE issuer_id = ? AND (status IN ('prepared','approved') OR (kind = 'create-token' AND status IN ('executing','issued','unknown')))`)
-            .bind(now, input.issuerId),
+          this.cancelRequests("issuer_id = ?", input.issuerId),
         );
         break;
       case "revoke-session":
@@ -148,10 +144,7 @@ export class IssuanceStore {
           this.db
             .prepare("UPDATE issuance_auth SET revoked_at = ? WHERE hash = ?")
             .bind(now, input.sessionId),
-          this.db
-            .prepare(`UPDATE issuance_requests SET status = CASE WHEN status IN ('prepared','approved') THEN 'declined' ELSE 'revoking' END, updated_at = ?
-          WHERE auth_hash = ? AND (status IN ('prepared','approved') OR (kind = 'create-token' AND status IN ('executing','issued','unknown')))`)
-            .bind(now, input.sessionId),
+          this.cancelRequests("auth_hash = ?", input.sessionId),
         );
         break;
     }
@@ -189,32 +182,34 @@ export class IssuanceStore {
     return row;
   }
   async membersTenants(subject: string) {
-    const tenantRows = await this.db
+    const { results } = await this.db
       .prepare(
         "SELECT t.id, t.label FROM issuance_tenants t JOIN issuance_members m ON m.tenant_id = t.id WHERE m.subject = ? ORDER BY t.label",
       )
       .bind(subject)
       .all<{ id: string; label: string }>();
-    return tenantRows.results;
+    return results;
   }
   async issuers(auth: Auth) {
-    const issuerRows = await this.db
+    const { results } = await this.db
       .prepare(
         `SELECT i.* FROM issuance_issuers i WHERE i.tenant_id = ? AND ${eligibleSql} ORDER BY i.id`,
       )
       .bind(auth.tenant_id, auth.subject, auth.subject)
       .all<Issuer>();
-    const rows = issuerRows.results;
     return Promise.all(
-      rows.map(async (row) => ({
+      results.map(async (row) => ({
         id: row.id,
         tenantId: row.tenant_id,
         label: row.label,
-        policy: policySchema.parse(
-          JSON.parse(await this.crypto.decrypt(row.policy_encrypted)),
-        ),
+        policy: await this.policy(row),
         approvalRequired: true,
       })),
+    );
+  }
+  async policy(issuer: Issuer) {
+    return policySchema.parse(
+      JSON.parse(await this.crypto.decrypt(issuer.policy_encrypted)),
     );
   }
   async issuer(id: string): Promise<Issuer> {
@@ -285,6 +280,27 @@ export class IssuanceStore {
         .bind(crypto.randomUUID(), row.id, row.subject, to, now),
     ]);
     return results[0]?.meta.changes === 1;
+  }
+  /**
+   * Cancels the matching requests that can still be cancelled: pending ones are
+   * declined, and created tokens move to revoking so reconciliation revokes them.
+   */
+  cancelRequests(where: string, ...args: string[]) {
+    return this.db
+      .prepare(`UPDATE issuance_requests SET status = CASE WHEN status IN ('prepared','approved') THEN 'declined' ELSE 'revoking' END, updated_at = ?
+        WHERE ${where} AND (status IN ('prepared','approved') OR (kind = 'create-token' AND status IN ('executing','issued','unknown')))`)
+      .bind(this.now(), ...args);
+  }
+  /** Counts one call against `key` in the current minute; false once `max` is reached. */
+  async admit(key: string, max: number) {
+    return Boolean(
+      await this.db
+        .prepare(
+          "INSERT INTO issuance_limits VALUES (?, ?, 1) ON CONFLICT(key, window) DO UPDATE SET count = count + 1 WHERE count < ? RETURNING count",
+        )
+        .bind(key, Math.floor(this.now() / 60000), max)
+        .first(),
+    );
   }
   event(requestId: string | null, actor: string, action: string) {
     return this.db

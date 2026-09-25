@@ -7,6 +7,9 @@ import {
   type ApiRequest,
 } from "./contracts.ts";
 
+/** The part of `fetch` issuance uses, so tests can pass a plain function. */
+export type Send = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 export function assertApiScope(
   request: ApiRequest,
   policy: z.infer<typeof policySchema>,
@@ -50,11 +53,7 @@ export function isTokenManagement(request: ApiRequest) {
   return /^\/accounts\/[a-f0-9]{32}\/tokens(?:\/|$)/u.test(request.path);
 }
 
-export async function providerRequest(
-  send: typeof fetch,
-  token: string,
-  input: ApiRequest,
-) {
+export async function providerRequest(send: Send, token: string, input: ApiRequest) {
   const request = apiRequestSchema.parse(input);
   const url = new URL(
     `https://${request.host}${request.host === "api.cloudflare.com" ? "/client/v4" : ""}${request.path}`,
@@ -110,10 +109,10 @@ export async function readProviderResponse(response: Response, token: string) {
       parts.push(part.value);
     }
   const collected = await new Blob(parts).text();
-  const text = collected.split(token).join("[REDACTED]");
+  const text = collected.replaceAll(token, "[REDACTED]");
   let value: z.infer<ReturnType<typeof z.json>>;
   try {
-    value = z.json().parse(JSON.parse(text));
+    value = JSON.parse(text);
   } catch {
     value = text;
   }

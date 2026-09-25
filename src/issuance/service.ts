@@ -1,28 +1,25 @@
 import { PolicyError } from "../policy.ts";
 import { CloudflareIssuer, ProviderError } from "./cloudflare.ts";
-import {
-  policySchema,
-  type Auth,
-  type Prepare,
-  type IssuanceRequest,
-  apiRequestSchema,
-} from "./contracts.ts";
+import type { ApiRequest, Auth, Prepare, IssuanceRequest } from "./contracts.ts";
 import { IssuanceStore } from "./store.ts";
-import type { z } from "zod";
 import {
   assertApiScope,
   assertTokenScope,
   isTokenManagement,
   providerRequest,
+  type Send,
 } from "./provider-request.ts";
-import { saveOutput, showOutput, resolveSecrets } from "./outputs.ts";
+import { recordOutput, resolveRequest, saveOutput, showOutput } from "./outputs.ts";
 
 export class IssuanceService {
+  private readonly provider: CloudflareIssuer;
+
   constructor(
     readonly store: IssuanceStore,
-    readonly provider = new CloudflareIssuer(),
-    readonly send: typeof fetch = fetch,
-  ) {}
+    readonly send: Send = fetch,
+  ) {
+    this.provider = new CloudflareIssuer(send);
+  }
   async prepare(auth: Auth, input: Prepare) {
     const existing = await this.store.db
       .prepare("SELECT id FROM issuance_requests WHERE id = ?")
@@ -36,9 +33,7 @@ export class IssuanceService {
       return this.view(row);
     }
     const issuer = await this.store.requireIssuer(auth, input.issuerId);
-    const policy = policySchema.parse(
-      JSON.parse(await this.store.crypto.decrypt(issuer.policy_encrypted)),
-    );
+    const policy = await this.store.policy(issuer);
     if (input.ttlSeconds > policy.maxTtlSeconds)
       throw new PolicyError(403, "requested lifetime exceeds issuer policy");
     if (input.operation.kind === "create-token")
@@ -156,21 +151,14 @@ export class IssuanceService {
     const plan = await this.store.plan(row);
     if (plan.operation.kind === "api-request") {
       const secrets = new Set<string>();
-      let request = plan.operation.request;
+      let request: ApiRequest;
       let parent: string;
       try {
-        if (request.body.kind === "json")
-          request = {
-            ...request,
-            body: {
-              kind: "json",
-              value: await resolveSecrets(this.store, auth, request.body.value, secrets),
-            },
-          };
+        request = await resolveRequest(this.store, auth, plan.operation.request, secrets);
         parent = await this.store.crypto.decrypt(issuer.parent_encrypted);
       } catch (error) {
         await this.store.transition(row, "executing", "failed");
-        const outputId = await saveOutput(this.store, row.id, {
+        await recordOutput(this.store, row.id, {
           status: error instanceof PolicyError ? error.status : 400,
           body: {
             outcome: "rejected",
@@ -180,10 +168,6 @@ export class IssuanceService {
                 : "invalid local request inputs",
           },
         });
-        await this.store.db
-          .prepare("UPDATE issuance_requests SET output_id = ? WHERE id = ?")
-          .bind(outputId, row.id)
-          .run();
         throw new PolicyError(
           400,
           "request rejected before contacting the provider; check request status for details",
@@ -191,11 +175,7 @@ export class IssuanceService {
       }
       try {
         const result = await providerRequest(this.send, parent, request);
-        const outputId = await saveOutput(this.store, row.id, result, [...secrets]);
-        await this.store.db
-          .prepare("UPDATE issuance_requests SET output_id = ? WHERE id = ?")
-          .bind(outputId, row.id)
-          .run();
+        await recordOutput(this.store, row.id, result, [...secrets]);
         // A provider response is evidence even if membership was revoked during the call.
         await this.store.transition(
           row,
@@ -244,7 +224,7 @@ export class IssuanceService {
           .run();
       }
       const outcome = error instanceof ProviderError ? error.outcome : "unknown";
-      const outputId = await saveOutput(this.store, row.id, {
+      await recordOutput(this.store, row.id, {
         status: error instanceof ProviderError ? (error.status ?? 502) : 502,
         body: {
           outcome,
@@ -254,10 +234,6 @@ export class IssuanceService {
               : "Vault could not finish recording token creation; reconciliation is required",
         },
       });
-      await this.store.db
-        .prepare("UPDATE issuance_requests SET output_id = ? WHERE id = ?")
-        .bind(outputId, row.id)
-        .run();
       await this.store.transition(
         row,
         "executing",
@@ -275,11 +251,7 @@ export class IssuanceService {
   async revoke(auth: Auth, requestId: string) {
     const row = await this.store.request(requestId, auth);
     await this.store.db.batch([
-      this.store.db
-        .prepare(`UPDATE issuance_requests SET status = CASE
-        WHEN status IN ('prepared','approved') THEN 'declined' ELSE 'revoking' END, updated_at = ?
-        WHERE id = ? AND (status IN ('prepared','approved') OR (kind = 'create-token' AND status IN ('issued','executing','unknown')))`)
-        .bind(this.store.now(), row.id),
+      this.store.cancelRequests("id = ?", row.id),
       this.store.db
         .prepare(
           "INSERT INTO issuance_events SELECT ?, ?, ?, 'cancel-requested', ? WHERE changes() = 1",
@@ -291,20 +263,18 @@ export class IssuanceService {
   }
   async reconcile() {
     const now = this.store.now();
-    const stalledRows = await this.store.db
+    const { results: stalled } = await this.store.db
       .prepare(
         "SELECT * FROM issuance_requests WHERE status = 'executing' AND updated_at < ? LIMIT 200",
       )
       .bind(now - 60000)
       .all<IssuanceRequest>();
-    const stalled = stalledRows.results;
     for (const row of stalled) await this.store.transition(row, "executing", "unknown");
-    const pendingRows = await this.store.db
+    const { results: rows } = await this.store.db
       .prepare(
         "SELECT * FROM issuance_requests WHERE (status IN ('prepared','approved','issued','revoking') OR (kind = 'create-token' AND status = 'unknown')) ORDER BY updated_at LIMIT 200",
       )
       .all<IssuanceRequest>();
-    const rows = pendingRows.results;
     for (const row of rows) {
       try {
         await this.cleanup(row);
@@ -398,7 +368,7 @@ export class IssuanceService {
         .run();
     }
   }
-  async use(auth: Auth, requestId: string, input: z.infer<typeof apiRequestSchema>) {
+  async use(auth: Auth, requestId: string, input: ApiRequest) {
     const row = await this.store.request(requestId, auth);
     if (
       row.status !== "issued" ||
@@ -409,33 +379,16 @@ export class IssuanceService {
       throw new PolicyError(403, "credential is unavailable, expired, or revoked");
     }
     const issuer = await this.store.issuer(row.issuer_id);
-    const policy = policySchema.parse(
-      JSON.parse(await this.store.crypto.decrypt(issuer.policy_encrypted)),
-    );
-    assertApiScope(input, policy);
+    assertApiScope(input, await this.store.policy(issuer));
     if (isTokenManagement(input))
       throw new PolicyError(403, "token management requires a new parent-token approval");
-    const admitted = await this.store.db
-      .prepare(
-        "INSERT INTO issuance_limits VALUES (?, ?, 1) ON CONFLICT(key, window) DO UPDATE SET count = count + 1 WHERE count < 60 RETURNING count",
-      )
-      .bind(`credential-use:${issuer.tenant_id}`, Math.floor(this.store.now() / 60000))
-      .first();
-    if (!admitted)
+    if (!(await this.store.admit(`credential-use:${issuer.tenant_id}`, 60)))
       throw new PolicyError(
         429,
         "too many credential uses for this tenant; retry after one minute",
       );
     const secrets = new Set<string>();
-    let request = input;
-    if (request.body.kind === "json")
-      request = {
-        ...request,
-        body: {
-          kind: "json",
-          value: await resolveSecrets(this.store, auth, request.body.value, secrets),
-        },
-      };
+    const request = await resolveRequest(this.store, auth, input, secrets);
     await this.store
       .event(row.id, auth.subject, `use:${request.method}:${request.path}`)
       .run();

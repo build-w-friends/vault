@@ -1,23 +1,15 @@
 import { AwsClient } from "aws4fetch";
 
 import { GitHubAppClient } from "../../../apps/worker/src/github/github-app.ts";
-import { VaultClient } from "../src/client.ts";
-import { readConfig } from "../src/config.ts";
 import * as v from "valibot";
+import { loadEnvironment, required } from "./operator.ts";
 
-const PROJECT = "bwf-shadow";
 const CLOUDFLARE_ACCOUNT_ID = "00000000000000000000000000000000";
 const WORKSPACE_BACKUP_BUCKET = "bwf-workspace-backups";
 const REVIEW_INDEX_BUCKET = "bwf-review-indexes";
 const ANALYTICS_ORIGIN = "https://analytics.buildwithfriends.dev";
 
 type SecretMap = ReadonlyMap<string, string>;
-type ProbeStatus = "PASS" | "FAIL" | "SKIP";
-
-type ProbeResult = {
-  label: string;
-  status: ProbeStatus;
-};
 
 export function cloudflareVerifyUrl(token: string): string {
   return token.startsWith("cfat_")
@@ -26,10 +18,9 @@ export function cloudflareVerifyUrl(token: string): string {
 }
 
 async function main(): Promise<void> {
-  const client = operatorClient();
   const [prodWorker, prodCi] = await Promise.all([
-    loadEnvironment(client, "prod-worker"),
-    loadEnvironment(client, "prod-ci"),
+    loadEnvironment("prod-worker"),
+    loadEnvironment("prod-ci"),
   ]);
 
   const results = await Promise.all([
@@ -56,55 +47,19 @@ async function main(): Promise<void> {
     probe("Sentry API", () => verifySentry(prodCi)),
   ]);
 
-  results.push(
-    { label: "GitHub OAuth", status: "SKIP" },
-    { label: "GitHub App user OAuth", status: "SKIP" },
-    { label: "PostHog capture", status: "SKIP" },
-    { label: "Sentry event ingestion", status: "SKIP" },
-    { label: "Cloudflare Realtime media", status: "SKIP" },
-  );
-
   for (const result of results) console.log(`${result.status}  ${result.label}`);
   const failed = results.filter((result) => result.status === "FAIL").length;
-  const skipped = results.filter((result) => result.status === "SKIP").length;
-  console.log(
-    `${results.length - failed - skipped} read-only probes passed, ${failed} failed, ${skipped} require consumer canaries`,
-  );
+  console.log(`${results.length - failed} read-only probes passed, ${failed} failed`);
   if (failed > 0) process.exitCode = 1;
 }
 
-function operatorClient(): VaultClient {
-  const config = readConfig();
-  if (config.apiUrl == null || config.apiKey == null) {
-    throw new Error("vault operator configuration is missing");
-  }
-  return new VaultClient(config.apiUrl, config.apiKey);
-}
-
-async function loadEnvironment(
-  client: VaultClient,
-  environment: string,
-): Promise<SecretMap> {
-  const exported = await client.exportSecrets(PROJECT, environment);
-  return new Map(exported.secrets.map((secret) => [secret.name, secret.value]));
-}
-
-async function probe(
-  label: string,
-  operation: () => Promise<void>,
-): Promise<ProbeResult> {
+async function probe(label: string, operation: () => Promise<void>) {
   try {
     await operation();
     return { label, status: "PASS" };
   } catch {
     return { label, status: "FAIL" };
   }
-}
-
-function required(secrets: SecretMap, name: string): string {
-  const value = secrets.get(name);
-  if (value == null || value.length === 0) throw new Error("required secret is absent");
-  return value;
 }
 
 async function verifyGitHubApp(secrets: SecretMap): Promise<void> {
@@ -139,18 +94,11 @@ async function verifyCloudflare(secrets: SecretMap): Promise<void> {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) throw new Error("Cloudflare rejected the token");
-  const parsed = v.safeParse(
-    v.looseObject({
-      result: v.optional(v.looseObject({ status: v.optional(v.string()) })),
-      success: v.optional(v.boolean()),
-    }),
-    await response.json(),
-  );
-  if (
-    !parsed.success ||
-    parsed.output.success !== true ||
-    parsed.output.result?.status !== "active"
-  ) {
+  const active = v.object({
+    success: v.literal(true),
+    result: v.object({ status: v.literal("active") }),
+  });
+  if (!v.is(active, await response.json())) {
     throw new Error("Cloudflare token is not active");
   }
 }
